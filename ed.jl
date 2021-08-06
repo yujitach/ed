@@ -1,7 +1,7 @@
 using LinearAlgebra,LinearMaps
 using Arpack
 
-const L=12
+const L=4
 
 #=
 
@@ -99,9 +99,9 @@ where 0,1,2 are twisted Z3 charge and 3 means it is a forbidden state
 
 =#
 
-flag = zeros(Int32,4^L)
+flag_ = zeros(Int32,4^L)
 
-function setFlag(ind)
+function setFlag!(flag,ind)
 	state=ind
 	if(ind==4^L)
 		state=0
@@ -145,7 +145,7 @@ function setFlag(ind)
 	flag[ind] |= tot << flagshift
 end
 
-diag = zeros(Float64,4^L)
+diag_ = zeros(Float64,4^L)
 
 const U = 10	# suppression factor for forbidden state
 const Z = 10	# suppression factor for states charged under twisted Z3
@@ -185,7 +185,7 @@ function stateFromInd(ind)
 	return state
 end
 
-function mainFlag(ind)
+function mainFlag(flag,ind)::Int32
 	return (flag[ind] >>flagshift) & 3
 end
 
@@ -199,13 +199,13 @@ function localStatePair(state,i)
 	return a,b
 end
 
-function isρ1ρ(ind,i)
+function isρ1ρ(flag,ind,i)
 	return ((flag[ind] >> (i-1)) & 1) == 1
 end
 
-function computeDiag(ind)
+function computeDiag!(diag,flag,ind)
 	state=stateFromInd(ind)
-	fl = mainFlag(ind)
+	fl = mainFlag(flag,ind)
 	if fl==3
 		diag[ind]=U
 		return
@@ -220,7 +220,7 @@ function computeDiag(ind)
 			diag[ind] -= 1
 		elseif sp==s0X
 			diag[ind] -= 1
-		elseif sp==sXX && isρ1ρ(ind,i)
+		elseif sp==sXX && isρ1ρ(flag,ind,i)
 			diag[ind] -= 1/ζ
 		elseif sp==sPM
 			diag[ind] -= y1 * y1
@@ -280,16 +280,16 @@ function pettyPrint(v)
 	println("")
 end
 
-function Hfunc(B)
+function Hfunc(B,diag,flag)
 	C = diag .* B
 	for ind = 1 : 4^L
-		if  mainFlag(ind) !=0
+		if  mainFlag(flag,ind) !=0
 			break
 		end
 		state=stateFromInd(ind)
 		for i = 1 : L
 			sp=localStatePair(state,i)
-			if sp==sXX  && isρ1ρ(ind,i)
+			if sp==sXX  && isρ1ρ(flag,ind,i)
 				C[newInd(state,i,sPM)] -= ξ * y1 * B[ind]
 				C[newInd(state,i,sMP)] -= ξ * y2 * B[ind]
 				C[newInd(state,i,s00)] -= ξ * x * B[ind]
@@ -331,11 +331,11 @@ end
 
 println("preparing...")
 for i = 1 : 4^L
-	setFlag(i)
-	computeDiag(i)
+	setFlag!(flag_,i)
+	computeDiag!(diag_,flag_,i)
 end
 
 println("computing eigenvalues...")
-H=LinearMap(Hfunc,4^L,ismutating=false,issymmetric=true,isposdef=false)
+H=LinearMap(B->Hfunc(B,diag_,flag_),4^L,ismutating=false,issymmetric=true,isposdef=false)
 e,v = eigs(H,nev=8)
 println(sort(e))
