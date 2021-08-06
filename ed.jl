@@ -187,10 +187,10 @@ function computeDiag(ind)
 	state=stateFromInd(ind)
 	fl = mainFlag(ind)
 	if fl==3
-		diag[ind]=U
+		diag[ind]=-U
 		return
 	else fl==1 || fl==2
-		diag[ind]=Z
+		diag[ind]=-Z
 		return
 	end
 	for i = 1 : L-1
@@ -236,7 +236,7 @@ function newInd(state,i,sp)
 	state |= (a<<(2*(i-1)))
 	
 	j=i+1
-	if j==L
+	if j==L+1
 		j=1
 	end
 	
@@ -253,7 +253,9 @@ function newInd(state,i,sp)
 	end
 end
 
-H=LinearMap(4^L; issymmetric=true,ismutating=true) do C, B
+# This is *minus* the Hamiltonian, where H= - Jρ + penalty term for non allowed states
+
+mH=LinearMap(4^L; issymmetric=true,ismutating=true) do C, B
 	C = diag .* B
 	for ind = 1 : 4^L
 		if  mainFlag(ind) !=0
@@ -263,10 +265,43 @@ H=LinearMap(4^L; issymmetric=true,ismutating=true) do C, B
 		for i = 1 : L
 			sp=localStatePair(state,i)
 			if sp==sXX && isρ1ρ(ind,i)
-				C[newInd(state,i,(2,3))] += ξ * y1 * B[ind]
-				C[newInd(state,i,(3,2))] += ξ * y2 * B[ind]
-				C[newInd(state,i,(1,1))] += ξ * x * B[ind]
-			elseif ...
+				C[newInd(state,i,sPM)] += ξ * y1 * B[ind]
+				C[newInd(state,i,sMP)] += ξ * y2 * B[ind]
+				C[newInd(state,i,s00)] += ξ * x * B[ind]
+			elseif sp==sPM
+				C[newInd(state,i,sXX)] += y1 * ξ * B[ind]
+				C[newInd(state,i,sMP)] += y1 * y2 * B[ind]
+				C[newInd(state,i,s00)] += y1 * x * B[ind]
+			elseif sp==sMP
+				C[newInd(state,i,sXX)] += y2 * ξ * B[ind]
+				C[newInd(state,i,sPM)] += y2 * y1 * B[ind]
+				C[newInd(state,i,s00)] += y2 * x * B[ind]
+			elseif sp==s00
+				C[newInd(state,i,sXX)] += x * ξ * B[ind]
+				C[newInd(state,i,sPM)] += x * y1 * B[ind]
+				C[newInd(state,i,sMP)] += x * y2 * B[ind]
+			elseif sp==s0P
+				C[newInd(state,i,sP0)] += y1 * y2 * B[ind]
+				C[newInd(state,i,sMM)] += y1 * z * B[ind]
+			elseif sp==sP0
+				C[newInd(state,i,s0P)] += y2 * y1 * B[ind]
+				C[newInd(state,i,sMM)] += y2 * z * B[ind]
+			elseif sp==sMM
+				C[newInd(state,i,s0P)] += z * y1 * B[ind]
+				C[newInd(state,i,sP0)] += z * y2 * B[ind]
+			elseif sp==s0M
+				C[newInd(state,i,sM0)] += y2 * y1 * B[ind]
+				C[newInd(state,i,sPP)] += y2 * z * B[ind]
+			elseif sp==sM0
+				C[newInd(state,i,s0M)] += y1 * y2 * B[ind]
+				C[newInd(state,i,sPP)] += y1 * z * B[ind]
+			elseif sp==sPP
+				C[newInd(state,i,s0M)] += z * y2 * B[ind]
+				C[newInd(state,i,sM0)] += z * y1 * B[ind]				
+			end
 		end
 	end
 end
+
+e,v = eigs(mH,nev=2)
+println(e)
