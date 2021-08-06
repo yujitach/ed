@@ -1,7 +1,7 @@
 using LinearAlgebra,LinearMaps
 using Arpack
 
-const L=12
+const L=4
 
 #=
 
@@ -189,11 +189,16 @@ function mainFlag(flag,ind)::Int32
 	return (flag[ind] >>flagshift) & 3
 end
 
-function localStatePair(state,i)
+function nextSite(i)
 	j=i+1
-	if j==L
+	if j==L+1
 		j=1
 	end
+	return j
+end
+
+function localStatePair(state,i)
+	j = nextSite(i)
 	a = (state >> (2*(i-1))) & 3
 	b = (state >> (2*(j-1))) & 3
 	return a,b
@@ -252,10 +257,7 @@ function newInd(state,i,sp)
 	state &= ~(3<<(2*(i-1)))
 	state |= (a<<(2*(i-1)))
 	
-	j=i+1
-	if j==L+1
-		j=1
-	end
+	j=nextSite(i)
 	
 	state &= ~(3<<(2*(j-1)))
 	state |= (b<<(2*(j-1)))
