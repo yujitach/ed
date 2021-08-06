@@ -1,3 +1,6 @@
+using LinearMaps
+using Arpack
+
 const mapping=Dict('x'=>0, '0'=>1, '+'=>2,'-'=>3)
 const revmapping=Dict(0=>'x', 1=>'0', 2=>'+',3=>'-')
 const L=6
@@ -134,7 +137,24 @@ const z = (2-√(13))/2
 const y1 = (5-√(13) - √(6+√(13)))/12
 const y2 = (5-√(13) + √(6+√(13)))/12
 
-function computeDiag(ind)
+const sXX=(0,0)
+const sX0=(0,1)
+const sXP=(0,2)
+const sXM=(0,3)
+const s0X=(1,0)
+const s00=(1,1)
+const s0P=(1,2)
+const s0M=(1,3)
+const sPX=(2,0)
+const sP0=(2,1)
+const sPP=(2,2)
+const sPM=(2,3)
+const sMX=(3,0)
+const sM0=(3,1)
+const sMP=(3,2)
+const sMM=(3,3)
+
+function stateFromInd(ind)
 	state=ind
 	if ind==4^L
 		state=0
@@ -142,7 +162,30 @@ function computeDiag(ind)
 	if ind==1 && iseven(L)
 		state=0
 	end
-	fl = (flag[ind] >>flagshift) & 3
+	return state
+end
+
+function mainFlag(ind)
+	return (flag[ind] >>flagshift) & 3
+end
+
+function localStatePair(state,i)
+	j=i+1
+	if j==L
+		j=1
+	end
+	a = (state >> 2*(i-1)) & 3
+	b = (state >> 2*(j-1)) & 3
+	return a,b
+end
+
+function isρ1ρ(ind,i)
+	return ((flag[ind] >> (i-1)) & 1) == 1
+end
+
+function computeDiag(ind)
+	state=stateFromInd(ind)
+	fl = mainFlag(ind)
 	if fl==3
 		diag[ind]=U
 		return
@@ -151,40 +194,34 @@ function computeDiag(ind)
 		return
 	end
 	for i = 1 : L-1
-		j = i+1
-		if j==L
-			j=1
-		end
-		a = (state >> 2*(i-1)) & 3
-		b = (state >> 2*(j-1)) & 3
-		if a==0 && b==1
+		sp=localStatePair(state,i)
+		if sp==sX0
 			diag[ind] += 1
-		elseif a==1 && b==0
+		elseif sp==s0X
 			diag[ind] += 1
-		elseif a==0 && b==0 && ((flag[ind] >> (i-1)) & 1 == 1)
+		elseif sp==sXX && isρ1ρ(ind,i)
 			diag[ind] += 1/ζ
-		elseif a==2 && b==3
+		elseif sp==sPM
 			diag[ind] += y1 * y1
-		elseif a==3 && b==2
+		elseif sp==sMP
 			diag[ind] += y2 * y2
-		elseif a==1 && b==1
+		elseif sp==s00
 			diag[ind] += x * x
-		elseif a==1 && b==2
+		elseif sp==s0P
 			diag[ind] += y1 * y1
-		elseif a==2 && b==1
+		elseif sp==sP0
 			diag[ind] += y2 * y2
-		elseif a==3 && b==3
+		elseif sp==sMM
 			diag[ind] += z * z
-		elseif a==1 && b==3
+		elseif sp==s0M
 			diag[ind] += y2 * y2
-		elseif a==3 && b==1
+		elseif sp==sM0
 			diag[ind] += y1 * y1
-		elseif a==2 && b==2
+		elseif sp==sPP
 			diag[ind] += z * z
 		end
 	end
 end
-
 
 
 for i = 1 : 4^L
@@ -192,14 +229,44 @@ for i = 1 : 4^L
 	computeDiag(i)
 end
 
-function replace(ind,i,a,b)
-	ind &= ~(3<<(2*(i-1)))
-	ind |= (a<<(2*(i-1)))
-	i+=1
-	if(i>L)
-		i=1
+function newInd(state,i,sp)
+	(a,b)=sp
+	
+	state &= ~(3<<(2*(i-1)))
+	state |= (a<<(2*(i-1)))
+	
+	j=i+1
+	if j==L
+		j=1
 	end
-	ind &= ~(3<<(2*(i-1)))
-	ind |= (b<<(2*(i-1)))
-	return ind
+	
+	state &= ~(3<<(2*(j-1)))
+	state |= (b<<(2*(j-1)))
+
+	if(state!=0)
+		return state
+	end
+	if(isodd(i))
+		return 4^L
+	else
+		return 1
+	end
+end
+
+H=LinearMap(4^L; issymmetric=true,ismutating=true) do C, B
+	C = diag .* B
+	for ind = 1 : 4^L
+		if  mainFlag(ind) !=0
+			break
+		end
+		state=stateFromInd(ind)
+		for i = 1 : L
+			sp=localStatePair(state,i)
+			if sp==sXX && isρ1ρ(ind,i)
+				C[newInd(state,i,(2,3))] += ξ * y1 * B[ind]
+				C[newInd(state,i,(3,2))] += ξ * y2 * B[ind]
+				C[newInd(state,i,(1,1))] += ξ * x * B[ind]
+			elseif ...
+		end
+	end
 end
