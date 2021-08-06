@@ -1,7 +1,7 @@
 using LinearAlgebra,LinearMaps
 using Arpack
 
-const L=4
+const L=9
 
 #=
 
@@ -282,8 +282,10 @@ function pettyPrint(v)
 	println("")
 end
 
-function Hfunc(B,diag,flag)
-	C = diag .* B
+function Hfunc!(C,B,diag,flag)
+	for ind = 1 : 4^L
+		C[ind] = diag[ind] * B[ind]
+	end
 	for ind = 1 : 4^L
 		if  mainFlag(flag,ind) !=0
 			continue
@@ -328,7 +330,6 @@ function Hfunc(B,diag,flag)
 			end
 		end
 	end
-	return C
 end
 
 println("preparing...")
@@ -338,6 +339,6 @@ for i = 1 : 4^L
 end
 
 println("computing eigenvalues...")
-H=LinearMap(B->Hfunc(B,diag_,flag_),4^L,ismutating=false,issymmetric=true,isposdef=false)
+H=LinearMap((C,B)->Hfunc!(C,B,diag_,flag_),4^L,ismutating=true,issymmetric=true,isposdef=false)
 @time e,v = eigs(H,nev=8,which=:SR)
 println(sort(e))
