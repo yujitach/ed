@@ -286,7 +286,7 @@ function Hfunc(B,diag,flag)
 	C = diag .* B
 	for ind = 1 : 4^L
 		if  mainFlag(flag,ind) !=0
-			break
+			continue
 		end
 		state=stateFromInd(ind)
 		for i = 1 : L
