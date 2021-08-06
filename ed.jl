@@ -3,7 +3,7 @@ using Arpack
 
 const mapping=Dict('x'=>0, '0'=>1, '+'=>2,'-'=>3)
 const revmapping=Dict(0=>'x', 1=>'0', 2=>'+',3=>'-')
-const L=9
+const L=12
 
 
 
@@ -79,7 +79,7 @@ function bitdump(i)
 	end
 end
 
-flag = zeros(Int16,4^L)
+flag = zeros(Int32,4^L)
 
 function setFlag(ind)
 	state=ind
@@ -225,10 +225,6 @@ function computeDiag(ind)
 end
 
 
-for i = 1 : 4^L
-	setFlag(i)
-	computeDiag(i)
-end
 
 function newInd(state,i,sp)
 	(a,b)=sp
@@ -313,6 +309,13 @@ function Hfunc(B)
 	return C
 end
 
+println("preparing...")
+for i = 1 : 4^L
+	setFlag(i)
+	computeDiag(i)
+end
+
+println("computing eigenvalues...")
 H=LinearMap(Hfunc,4^L,ismutating=false,issymmetric=true,isposdef=false)
 e,v = eigs(H,nev=8)
 println(sort(e))
