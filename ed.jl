@@ -1,11 +1,35 @@
 using LinearAlgebra,LinearMaps
 using Arpack
 
-const mapping=Dict('x'=>0, '0'=>1, '+'=>2,'-'=>3)
-const revmapping=Dict(0=>'x', 1=>'0', 2=>'+',3=>'-')
 const L=12
 
+#=
 
+As Julia's array is 1-based, I use 
+
+	"ind" = 1 ... 4^L
+
+as the array index.
+
+"state" is what you obtain by encoding edge labels using the following mapping,
+and takes the values 0 ...  4^L-1.
+
+=#
+
+const mapping=Dict('x'=>0, '0'=>1, '+'=>2,'-'=>3)
+const revmapping=Dict(0=>'x', 1=>'0', 2=>'+',3=>'-')
+
+#=
+
+The conversion between "ind" and "state" is basically done by considering modulo 4^L.
+
+When L is even, however, some additional care is needed, 
+since "xxx...x" can come with two "start labels".
+My convention is to use
+	ind == 4^L  for "x....x" with ρ as the start label
+	ind == 1  for "x....x" with 1 as the start label
+
+=#
 
 function indexFromString(s::String)
 	if length(s)!=L
@@ -46,20 +70,6 @@ end
 
 const flagshift = L+2
 
-#=
-
-When L is even, 
-the non-allowed state ind=1 ( 0x^(L-1) ) is reused as x^L with start label 1, while
-the state 4^+ (x^L) is x^L with start label ρ.
-
-When L is odd, no special treatment is done.
-
-flag[ind] is a bitmask; from the 0th bit to (L-1)-th bit , 1 indicates that
-the edge labels (i+1) (i+2) are x,x and corresponds to ρ,1,ρ
-the (L+2)th and (L+3)th bit combine to form 0,1,2,3 , 
-where 0,1,2 are twisted Z3 charge and 3 means it is a forbidden state
-
-=#
 
 function bitdump(i)
 	s=""
@@ -78,6 +88,16 @@ function bitdump(i)
 		println("Z3 charge: $a")
 	end
 end
+
+
+#=
+
+flag[ind] is a bitmask; from the 0th bit to (L-1)-th bit , 1 indicates that
+the edge labels (i+1) (i+2) are x,x and corresponds to ρ,1,ρ
+the (L+2)th and (L+3)th bit combine to form 0,1,2,3 , 
+where 0,1,2 are twisted Z3 charge and 3 means it is a forbidden state
+
+=#
 
 flag = zeros(Int32,4^L)
 
