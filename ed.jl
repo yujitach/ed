@@ -3,7 +3,7 @@ using Arpack
 
 const mapping=Dict('x'=>0, '0'=>1, '+'=>2,'-'=>3)
 const revmapping=Dict(0=>'x', 1=>'0', 2=>'+',3=>'-')
-const L=6
+const L=4
 
 
 
@@ -61,8 +61,7 @@ where 0,1,2 are twisted Z3 charge and 3 means it is a forbidden state
 
 =#
 
-function bitdump(ind)
-	i=flag[ind]
+function bitdump(i)
 	s=""
 	for pos = 0 : L-1
 		if (i & (1<<pos))!=0
@@ -133,9 +132,10 @@ const Z = 10	# suppression factor for states charged under twisted Z3
 const ζ = (√(13)+3)/2
 const ξ = 1/√ζ
 const x = (2-√(13))/2
-const z = (2-√(13))/2
+const z = (1+√(13))/2
 const y1 = (5-√(13) - √(6+√(13)))/12
 const y2 = (5-√(13) + √(6+√(13)))/12
+
 
 const sXX=(0,0)
 const sX0=(0,1)
@@ -174,8 +174,8 @@ function localStatePair(state,i)
 	if j==L
 		j=1
 	end
-	a = (state >> 2*(i-1)) & 3
-	b = (state >> 2*(j-1)) & 3
+	a = (state >> (2*(i-1))) & 3
+	b = (state >> (2*(j-1))) & 3
 	return a,b
 end
 
@@ -187,38 +187,38 @@ function computeDiag(ind)
 	state=stateFromInd(ind)
 	fl = mainFlag(ind)
 	if fl==3
-		diag[ind]=-U
+		diag[ind]=U
 		return
-	else fl==1 || fl==2
-		diag[ind]=-Z
+	elseif fl==1 || fl==2
+		diag[ind]=Z
 		return
 	end
 	for i = 1 : L-1
 		sp=localStatePair(state,i)
 		if sp==sX0
-			diag[ind] += 1
+			diag[ind] -= 1
 		elseif sp==s0X
-			diag[ind] += 1
+			diag[ind] -= 1
 		elseif sp==sXX && isρ1ρ(ind,i)
-			diag[ind] += 1/ζ
+			diag[ind] -= 1/ζ
 		elseif sp==sPM
-			diag[ind] += y1 * y1
+			diag[ind] -= y1 * y1
 		elseif sp==sMP
-			diag[ind] += y2 * y2
+			diag[ind] -= y2 * y2
 		elseif sp==s00
-			diag[ind] += x * x
+			diag[ind] -= x * x
 		elseif sp==s0P
-			diag[ind] += y1 * y1
+			diag[ind] -= y1 * y1
 		elseif sp==sP0
-			diag[ind] += y2 * y2
+			diag[ind] -= y2 * y2
 		elseif sp==sMM
-			diag[ind] += z * z
+			diag[ind] -= z * z
 		elseif sp==s0M
-			diag[ind] += y2 * y2
+			diag[ind] -= y2 * y2
 		elseif sp==sM0
-			diag[ind] += y1 * y1
+			diag[ind] -= y1 * y1
 		elseif sp==sPP
-			diag[ind] += z * z
+			diag[ind] -= z * z
 		end
 	end
 end
@@ -253,55 +253,58 @@ function newInd(state,i,sp)
 	end
 end
 
-# This is *minus* the Hamiltonian, where H= - Jρ + penalty term for non allowed states
 
-mH=LinearMap(4^L; issymmetric=true,ismutating=true) do C, B
-	C = diag .* B
+H=LinearMap(4^L; issymmetric=true,ismutating=true) do C, B
 	for ind = 1 : 4^L
+		C[ind] = diag[ind] * B[ind]
 		if  mainFlag(ind) !=0
 			break
 		end
 		state=stateFromInd(ind)
 		for i = 1 : L
 			sp=localStatePair(state,i)
-			if sp==sXX && isρ1ρ(ind,i)
-				C[newInd(state,i,sPM)] += ξ * y1 * B[ind]
-				C[newInd(state,i,sMP)] += ξ * y2 * B[ind]
-				C[newInd(state,i,s00)] += ξ * x * B[ind]
+			if sp==sXX  && isρ1ρ(ind,i)
+				C[newInd(state,i,sPM)] -= ξ * y1 * B[ind]
+				C[newInd(state,i,sMP)] -= ξ * y2 * B[ind]
+				C[newInd(state,i,s00)] -= ξ * x * B[ind]
 			elseif sp==sPM
-				C[newInd(state,i,sXX)] += y1 * ξ * B[ind]
-				C[newInd(state,i,sMP)] += y1 * y2 * B[ind]
-				C[newInd(state,i,s00)] += y1 * x * B[ind]
+				C[newInd(state,i,sXX)] -= y1 * ξ * B[ind]
+				C[newInd(state,i,sMP)] -= y1 * y2 * B[ind]
+				C[newInd(state,i,s00)] -= y1 * x * B[ind]
 			elseif sp==sMP
-				C[newInd(state,i,sXX)] += y2 * ξ * B[ind]
-				C[newInd(state,i,sPM)] += y2 * y1 * B[ind]
-				C[newInd(state,i,s00)] += y2 * x * B[ind]
+				C[newInd(state,i,sXX)] -= y2 * ξ * B[ind]
+				C[newInd(state,i,sPM)] -= y2 * y1 * B[ind]
+				C[newInd(state,i,s00)] -= y2 * x * B[ind]
 			elseif sp==s00
-				C[newInd(state,i,sXX)] += x * ξ * B[ind]
-				C[newInd(state,i,sPM)] += x * y1 * B[ind]
-				C[newInd(state,i,sMP)] += x * y2 * B[ind]
+				C[newInd(state,i,sXX)] -= x * ξ * B[ind]
+				C[newInd(state,i,sPM)] -= x * y1 * B[ind]
+				C[newInd(state,i,sMP)] -= x * y2 * B[ind]
 			elseif sp==s0P
-				C[newInd(state,i,sP0)] += y1 * y2 * B[ind]
-				C[newInd(state,i,sMM)] += y1 * z * B[ind]
+				C[newInd(state,i,sP0)] -= y1 * y2 * B[ind]
+				C[newInd(state,i,sMM)] -= y1 * z * B[ind]
 			elseif sp==sP0
-				C[newInd(state,i,s0P)] += y2 * y1 * B[ind]
-				C[newInd(state,i,sMM)] += y2 * z * B[ind]
+				C[newInd(state,i,s0P)] -= y2 * y1 * B[ind]
+				C[newInd(state,i,sMM)] -= y2 * z * B[ind]
 			elseif sp==sMM
-				C[newInd(state,i,s0P)] += z * y1 * B[ind]
-				C[newInd(state,i,sP0)] += z * y2 * B[ind]
+				C[newInd(state,i,s0P)] -= z * y1 * B[ind]
+				C[newInd(state,i,sP0)] -= z * y2 * B[ind]
 			elseif sp==s0M
-				C[newInd(state,i,sM0)] += y2 * y1 * B[ind]
-				C[newInd(state,i,sPP)] += y2 * z * B[ind]
+				C[newInd(state,i,sM0)] -= y2 * y1 * B[ind]
+				C[newInd(state,i,sPP)] -= y2 * z * B[ind]
 			elseif sp==sM0
-				C[newInd(state,i,s0M)] += y1 * y2 * B[ind]
-				C[newInd(state,i,sPP)] += y1 * z * B[ind]
+				C[newInd(state,i,s0M)] -= y1 * y2 * B[ind]
+				C[newInd(state,i,sPP)] -= y1 * z * B[ind]
 			elseif sp==sPP
-				C[newInd(state,i,s0M)] += z * y2 * B[ind]
-				C[newInd(state,i,sM0)] += z * y1 * B[ind]				
+				C[newInd(state,i,s0M)] -= z * y2 * B[ind]
+				C[newInd(state,i,sM0)] -= z * y1 * B[ind]				
 			end
 		end
 	end
 end
 
-e,v = eigs(mH,nev=2)
-println(e)
+for ind = 1 : 1
+	v=[ (i==ind ? 1 : 0) for i = 1: 4^L ]
+	println(H*v)
+end
+e,v = eigs(H,nev=8)
+println(sort(e))
