@@ -1,9 +1,9 @@
-using LinearMaps
+using LinearAlgebra,LinearMaps
 using Arpack
 
 const mapping=Dict('x'=>0, '0'=>1, '+'=>2,'-'=>3)
 const revmapping=Dict(0=>'x', 1=>'0', 2=>'+',3=>'-')
-const L=4
+const L=9
 
 
 
@@ -193,7 +193,8 @@ function computeDiag(ind)
 		diag[ind]=Z
 		return
 	end
-	for i = 1 : L-1
+	diag[ind]=0
+	for i = 1 : L
 		sp=localStatePair(state,i)
 		if sp==sX0
 			diag[ind] -= 1
@@ -253,10 +254,19 @@ function newInd(state,i,sp)
 	end
 end
 
+function pettyPrint(v)
+	for x in v
+		if(abs(x)<.0001)
+			x=0
+		end
+		print("$x,")
+	end
+	println("")
+end
 
-H=LinearMap(4^L; issymmetric=true,ismutating=true) do C, B
+function Hfunc(B)
+	C = diag .* B
 	for ind = 1 : 4^L
-		C[ind] = diag[ind] * B[ind]
 		if  mainFlag(ind) !=0
 			break
 		end
@@ -300,11 +310,9 @@ H=LinearMap(4^L; issymmetric=true,ismutating=true) do C, B
 			end
 		end
 	end
+	return C
 end
 
-for ind = 1 : 1
-	v=[ (i==ind ? 1 : 0) for i = 1: 4^L ]
-	println(H*v)
-end
+H=LinearMap(Hfunc,4^L,ismutating=false,issymmetric=true,isposdef=false)
 e,v = eigs(H,nev=8)
 println(sort(e))
