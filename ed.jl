@@ -151,8 +151,8 @@ const U = 10	# suppression factor for forbidden state
 const Z = 10	# suppression factor for states charged under twisted Z3
 const ζ = (√(13)+3)/2
 const ξ = 1/√ζ
-const x = (2-√(13))/2
-const z = (1+√(13))/2
+const x = (2-√(13))/3
+const z = (1+√(13))/6
 const y1 = (5-√(13) - √(6+√(13)))/12
 const y2 = (5-√(13) + √(6+√(13)))/12
 
