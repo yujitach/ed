@@ -1,7 +1,7 @@
 using LinearAlgebra,LinearMaps
 using Arpack
 
-const L=4
+const L=12
 
 #=
 
@@ -337,5 +337,5 @@ end
 
 println("computing eigenvalues...")
 H=LinearMap(B->Hfunc(B,diag_,flag_),4^L,ismutating=false,issymmetric=true,isposdef=false)
-e,v = eigs(H,nev=8)
+@time e,v = eigs(H,nev=8,which=:SR)
 println(sort(e))
