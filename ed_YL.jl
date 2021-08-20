@@ -3,8 +3,8 @@ using SparseArrays
 using ArnoldiMethod
 using Arpack
 
-const L = 9
-const nev = 8
+const L = 16
+const nev = 1
 
 println()
 println("exact diagonalization of L=", L, " keeping nev=", nev)
@@ -393,6 +393,7 @@ println()
 newPreind(state,i,sp) = fromInd[newInd(state,i,sp)]
 
 function buildH(diag,flag)
+	res = sparse(Int64[],Int64[],Float64[],len,len)
 	col=Int64[]
 	row=Int64[]
 	val=Float64[]
@@ -446,8 +447,14 @@ function buildH(diag,flag)
 				append!(val,-z .* [y2,y1])
 			end
 		end
+		if (preind % (len / 10)) == 1 || preind == len
+			res += sparse(row,col,val,len,len)
+			col=Int64[]
+			row=Int64[]
+			val=Float64[]
+		end
 	end
-	return sparse(row,col,val,len,len)
+	return res
 end
 
 function eigs_ArnoldiMethod(H)
@@ -461,8 +468,13 @@ println("build H...")
 println()
 
 println("computing eigenvalues...")
-# println("using Arpack:")
-# @time e,v = Arpack.eigs(H,nev=nev,which=:SR)
+println()
+
+println("using Arpack:")
+@time e,v = Arpack.eigs(H,nev=nev,which=:SR)
+println(sort(e))
+println()
+
 println("using ArnoldiMethod:")
 @time e,v = eigs_ArnoldiMethod(H)
 println(sort(e))
@@ -826,7 +838,7 @@ function Tind(ind::Int64,L::Int64,right::Bool)
 	end
 end
 
-function Tfunc!(C::Vector{Float64},B::Vector{Float64},L::Int64=L,right::Bool=true)
+function Tfunc!(C,B,L::Int64=L,right::Bool=true)
 	Threads.@threads for preind = 1 : len
 		ind = basis[preind]
 		C[preind] = B[fromInd[Tind(ind,L,right)]]
