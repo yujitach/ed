@@ -6,6 +6,10 @@ using Arpack
 const L = 9
 const nev = 8
 
+println()
+println("exact diagonalization of L=", L, " keeping nev=", nev)
+println()
+
 #=
 
 NOTE To facilitate the code, I always specify the variable types for functions.
@@ -113,6 +117,68 @@ function stringFromState(state::Int64,L::Int64=L)
 	return s
 end
 
+
+#=
+
+Divide-and-conquer stuff.
+
+=#
+
+kantaro_ = Dict{Tuple{Int64,Bool,Bool,Int64},Vector{Int64}}()
+
+for el = 0 : 1
+	for er = 0 : 1
+		for q = 0 : 2
+			kantaro_[(1, el, er, q)] = []
+		end
+	end
+end
+kantaro_[(1, true, true, 0)] = [ 1 ]
+kantaro_[(1, true, true, 1)] = [ 2 ]
+kantaro_[(1, true, true, 2)] = [ 3 ]
+
+function setKantaro!(kantaro::Dict{Tuple{Int64,Bool,Bool,Int64},Vector{Int64}},
+	L::Int64, evenxs_left::Bool, evenxs_right::Bool, q::Int64)
+	kantaro[(L, evenxs_left, evenxs_right, q)] = []
+	if evenxs_right
+		append!( kantaro[(L, evenxs_left, evenxs_right, q)], getKantaro(kantaro, L-1, evenxs_left, false, q) ) # append x
+		append!( kantaro[(L, evenxs_left, evenxs_right, q)], [ x + (1 << (2*(L-1))) for x in getKantaro(kantaro, L-1, evenxs_left, true, q) ] )
+		append!( kantaro[(L, evenxs_left, evenxs_right, q)], [ x + (2 << (2*(L-1))) for x in getKantaro(kantaro, L-1, evenxs_left, true, (q+2)%3) ] )
+		append!( kantaro[(L, evenxs_left, evenxs_right, q)], [ x + (3 << (2*(L-1))) for x in getKantaro(kantaro, L-1, evenxs_left, true, (q+1)%3) ] )
+	else
+		append!( kantaro[(L, evenxs_left, evenxs_right, q)], getKantaro(kantaro, L-1, evenxs_left, true, q) )
+	end
+	if ((iseven(L) && !evenxs_left) || (isodd(L) && evenxs_left)) && evenxs_right
+		append!( kantaro[(L, evenxs_left, evenxs_right, q)], [ (q+1) << (2*(L-1)) ] )
+	end
+end
+
+function getKantaro(kantaro::Dict{Tuple{Int64,Bool,Bool,Int64},Vector{Int64}},
+	L::Int64, evenxs_left::Bool, evenxs_right::Bool, q::Int64)::Vector{Int64}
+	if !haskey(kantaro, (L, evenxs_left, evenxs_right, q))
+		setKantaro!(kantaro, L, evenxs_left, evenxs_right, q)
+	end
+	return kantaro[(L, evenxs_left, evenxs_right, q)]
+end
+
+function getKantaro(kantaro::Dict{Tuple{Int64,Bool,Bool,Int64},Vector{Int64}}, L::Int64)::Vector{Int64}
+	res = []
+	append!(res, getKantaro(kantaro_, L, true, true, 0))
+	append!(res, getKantaro(kantaro_, L, false, false, 0))
+	if iseven(L)
+		append!(res, [0, 1])
+	end
+	sort!(res)
+	return res
+end
+
+println("computing basis...")
+@time const basis = [ x+1 for x in getKantaro(kantaro_, L) ]
+const len = length(basis)
+const fromInd = Dict((basis[x],x) for x in 1:len)
+println()
+
+
 #=
 TODO trailingXs is only used for inferring whether start label is type 1 or ρ.
 Might as well define a function that also checks whether state is 1 when L even.
@@ -127,9 +193,6 @@ function trailingXs(state::Int64,L::Int64=L)
 	return L-i
 end
 
-# Changed to Int64 since Int32 will not be enough even for L=15.
-flag_ = zeros(Int64,4^L)
-
 #=
 
 Modified to allow for nontrivial start/draped used in the zipper.
@@ -138,18 +201,23 @@ But zipper only cares about the main flag, which is computed by setFusionFlag!,
 so might as well keep Yuji's original definition.
 
 =#
-function setFlag!(flag::Vector{Int64},ind::Int64,L::Int64=L)
+
+# Changed to Int64 since Int32 will not be enough even for L=15.
+flag_ = zeros(Int64,len)
+
+function setFlag!(flag::Vector{Int64},preind::Int64,L::Int64=L)
+	ind = basis[preind]
 	flagshift=L+2
 	state=ind-1
 	below=(state>>(2*(L+1)))
 	start=(state>>(2*L))&3
 	state=state&(4^L-1)
 	if (start==3) || (below>=L)
-		flag[ind] |= 3 << flagshift
+		flag[preind] |= 3 << flagshift
 		return
 	end
 	if state==0 && isodd(L)
-		flag[ind] |= 3 << flagshift
+		flag[preind] |= 3 << flagshift
 		return
 	end
 	evenxs=iseven(trailingXs(state,L))
@@ -163,7 +231,7 @@ function setFlag!(flag::Vector{Int64},ind::Int64,L::Int64=L)
 		a=(state >> (2*pos)) & 3
 		if a==0
 			if(evenxs)
-				flag[ind] |= 1<<pos
+				flag[preind] |= 1<<pos
 			end
 			evenxs = ! evenxs
 			if ((pos+1)==below || (below!=0 && pos==L-1))
@@ -172,7 +240,7 @@ function setFlag!(flag::Vector{Int64},ind::Int64,L::Int64=L)
 		else
 			if(!evenxs)
 				# not allowed
-				flag[ind] |= 3 << flagshift
+				flag[preind] |= 3 << flagshift
 				return
 			end
 			if a==2
@@ -188,13 +256,13 @@ function setFlag!(flag::Vector{Int64},ind::Int64,L::Int64=L)
 	end
 	tot%=3
 	if state==0 && isodd(L)
-		flag[ind] |= 3 << flagshift
+		flag[preind] |= 3 << flagshift
 		return
 	end
-	flag[ind] |= tot << flagshift
+	flag[preind] |= tot << flagshift
 end
 
-diag_ = zeros(Float64,4^L)
+diag_ = zeros(Float64,len)
 
 const U = 10	# suppression factor for forbidden state
 const Z = 10	# suppression factor for states charged under twisted Z3
@@ -230,9 +298,9 @@ function stateFromInd(ind::Int64,L::Int64=L)
 	return state
 end
 
-function mainFlag(flag::Vector{Int64},ind::Int64,L::Int64=L)::Int8
+function mainFlag(flag::Vector{Int64},preind::Int64,L::Int64=L)::Int8
 	flagshift=L+2
-	return (flag[ind] >> flagshift) & 3
+	return (flag[preind] >> flagshift) & 3
 end
 
 function nextSite(i::Int64,L::Int64=L)
@@ -250,62 +318,59 @@ function localStatePair(state::Int64,i::Int64,L::Int64=L)
 	return a,b
 end
 
-function isρ1ρ(flag::Vector{Int64},ind::Int64,i::Int64)
-	return ((flag[ind] >> (i-1)) & 1) == 1
+function isρ1ρ(flag::Vector{Int64},preind::Int64,i::Int64)
+	return ((flag[preind] >> (i-1)) & 1) == 1
 end
 
-function computeDiag!(diag::Vector{Float64},flag::Vector{Int64},ind::Int64)
+function computeDiag!(diag::Vector{Float64},flag::Vector{Int64},preind::Int64)
+	ind = basis[preind]
 	state=stateFromInd(ind)
-	fl = mainFlag(flag,ind)
+	fl = mainFlag(flag,preind)
 	if fl==3
-		diag[ind]=U
+		diag[preind]=U
 		return
 	elseif fl==1 || fl==2
-		diag[ind]=Z
+		diag[preind]=Z
 		return
 	end
-	diag[ind]=0
+	diag[preind]=0
 	for i = 1 : L
 		sp=localStatePair(state,i)
 		if sp==sX0
-			diag[ind] -= 1
+			diag[preind] -= 1
 		elseif sp==s0X
-			diag[ind] -= 1
-		elseif sp==sXX && isρ1ρ(flag,ind,i)
-			diag[ind] -= 1/ζ
+			diag[preind] -= 1
+		elseif sp==sXX && isρ1ρ(flag,preind,i)
+			diag[preind] -= 1/ζ
 		elseif sp==sPM
-			diag[ind] -= y1 * y1
+			diag[preind] -= y1 * y1
 		elseif sp==sMP
-			diag[ind] -= y2 * y2
+			diag[preind] -= y2 * y2
 		elseif sp==s00
-			diag[ind] -= x * x
+			diag[preind] -= x * x
 		elseif sp==s0P
-			diag[ind] -= y1 * y1
+			diag[preind] -= y1 * y1
 		elseif sp==sP0
-			diag[ind] -= y2 * y2
+			diag[preind] -= y2 * y2
 		elseif sp==sMM
-			diag[ind] -= z * z
+			diag[preind] -= z * z
 		elseif sp==s0M
-			diag[ind] -= y2 * y2
+			diag[preind] -= y2 * y2
 		elseif sp==sM0
-			diag[ind] -= y1 * y1
+			diag[preind] -= y1 * y1
 		elseif sp==sPP
-			diag[ind] -= z * z
+			diag[preind] -= z * z
 		end
 	end
 end
 
 function newInd(state::Int64,i::Int64,sp::Tuple{Int64, Int64})
 	(a,b)=sp
-
 	state &= ~(3<<(2*(i-1)))
 	state |= (a<<(2*(i-1)))
-
 	j=nextSite(i)
-
 	state &= ~(3<<(2*(j-1)))
 	state |= (b<<(2*(j-1)))
-
 	if(state!=0)
 		return 1+state
 	end
@@ -316,19 +381,15 @@ function newInd(state::Int64,i::Int64,sp::Tuple{Int64, Int64})
 	end
 end
 
-println()
 println("available number of threads: ", Threads.nthreads())
 println()
 println("preparing...")
-Threads.@threads for i = 1 : 4^L
-	setFlag!(flag_,i)
-	computeDiag!(diag_,flag_,i)
+Threads.@threads for preind = 1 : len
+	setFlag!(flag_,preind)
+	computeDiag!(diag_,flag_,preind)
 end
 println()
 
-const basis = filter(x -> (mainFlag(flag_,x)==0),1:4^L)
-const len = length(basis)
-const fromInd = Dict((basis[x],x) for x in 1:len)
 newPreind(state,i,sp) = fromInd[newInd(state,i,sp)]
 
 function buildH(diag,flag)
@@ -340,10 +401,10 @@ function buildH(diag,flag)
 		state=stateFromInd(ind)
 		append!(col,[preind])
 		append!(row,[preind])
-		append!(val,[diag[ind]])
+		append!(val,[diag[preind]])
 		for i = 1 : L
 			sp=localStatePair(state,i)
-			if sp==sXX  && isρ1ρ(flag,ind,i)
+			if sp==sXX  && isρ1ρ(flag,preind,i)
 				append!(col,[preind,preind,preind])
 				append!(row,map(s->newPreind(state,i,s),[sPM,sMP,s00]))
 				append!(val,-ξ .* [y1,y2,x])
@@ -386,7 +447,7 @@ function buildH(diag,flag)
 			end
 		end
 	end
-	return sparse(row,col,val)
+	return sparse(row,col,val,len,len)
 end
 
 function eigs_ArnoldiMethod(H)
@@ -693,7 +754,8 @@ function buildDetach()
 		if ni==1 && ((ind-1)&(4^(L+2)-1))==1 && iseven(L)
 			ni=2
 		end
-		if mainFlag(flag_,ni,L) != 0
+		# TODO
+		if mainFlag(fusionFlag_,ni,L) != 0
 			continue
 		end
 		ni = fromInd[ni]
