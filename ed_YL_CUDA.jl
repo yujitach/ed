@@ -502,7 +502,14 @@ end
 
 function eigs_KrylovKit(H)
 	val,vecs,info = KrylovKit.eigsolve(H,rand(eltype(H),size(H,1)),nev,:SR;issymmetric=true)
-	return val,vecs
+	mat = zeros(size(vecs,1),len)
+	mat = zeros(len,size(vecs,1))
+	cnt = 1
+	for v in vecs
+		mat[:,cnt] = v
+		cnt += 1
+	end
+	return val,mat
 end
 
 println("build H...")
