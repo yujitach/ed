@@ -2,8 +2,9 @@ using LinearAlgebra,LinearMaps
 using SparseArrays
 using ArnoldiMethod
 using Arpack
+using BenchmarkTools
 
-const L = 16
+const L = 15
 const nev = 1
 
 println()
@@ -397,62 +398,95 @@ function buildH(diag,flag)
 	col=Int64[]
 	row=Int64[]
 	val=Float64[]
+	ncol = 1
 	for preind = 1 : len
 		ind = basis[preind]
 		state=stateFromInd(ind)
-		append!(col,[preind])
-		append!(row,[preind])
-		append!(val,[diag[preind]])
+		# cannot directly append into row, val because row needs to be ordered
+		# define minirow/val and append to row/val after sorting
+		minirow = [preind]
+		minival = [diag[preind]]
 		for i = 1 : L
 			sp=localStatePair(state,i)
 			if sp==sXX  && isρ1ρ(flag,preind,i)
-				append!(col,[preind,preind,preind])
-				append!(row,map(s->newPreind(state,i,s),[sPM,sMP,s00]))
-				append!(val,-ξ .* [y1,y2,x])
+				append!(minirow,map(s->newPreind(state,i,s),[sPM,sMP,s00]))
+				append!(minival,-ξ .* [y1,y2,x])
 			elseif sp==sPM
-				append!(col,[preind,preind,preind])
-				append!(row,map(s->newPreind(state,i,s),[sXX,sMP,s00]))
-				append!(val,-y1 .* [ξ,y2,x])
+				append!(minirow,map(s->newPreind(state,i,s),[sXX,sMP,s00]))
+				append!(minival,-y1 .* [ξ,y2,x])
 			elseif sp==sMP
-				append!(col,[preind,preind,preind])
-				append!(row,map(s->newPreind(state,i,s),[sXX,sPM,s00]))
-				append!(val,-y2 .* [ξ,y1,x])
+				append!(minirow,map(s->newPreind(state,i,s),[sXX,sPM,s00]))
+				append!(minival,-y2 .* [ξ,y1,x])
 			elseif sp==s00
-				append!(col,[preind,preind,preind])
-				append!(row,map(s->newPreind(state,i,s),[sXX,sPM,sMP]))
-				append!(val,-x .* [ξ,y1,y2])
+				append!(minirow,map(s->newPreind(state,i,s),[sXX,sPM,sMP]))
+				append!(minival,-x .* [ξ,y1,y2])
 			elseif sp==s0P
-				append!(col,[preind,preind])
-				append!(row,map(s->newPreind(state,i,s),[sP0,sMM]))
-				append!(val,-y1 .* [y2,z])
+				append!(minirow,map(s->newPreind(state,i,s),[sP0,sMM]))
+				append!(minival,-y1 .* [y2,z])
 			elseif sp==sP0
-				append!(col,[preind,preind])
-				append!(row,map(s->newPreind(state,i,s),[s0P,sMM]))
-				append!(val,-y2 .* [y1,z])
+				append!(minirow,map(s->newPreind(state,i,s),[s0P,sMM]))
+				append!(minival,-y2 .* [y1,z])
 			elseif sp==sMM
-				append!(col,[preind,preind])
-				append!(row,map(s->newPreind(state,i,s),[s0P,sP0]))
-				append!(val,-z .* [y1,y2])
+				append!(minirow,map(s->newPreind(state,i,s),[s0P,sP0]))
+				append!(minival,-z .* [y1,y2])
 			elseif sp==s0M
-				append!(col,[preind,preind])
-				append!(row,map(s->newPreind(state,i,s),[sM0,sPP]))
-				append!(val,-y2 .* [y1,z])
+				append!(minirow,map(s->newPreind(state,i,s),[sM0,sPP]))
+				append!(minival,-y2 .* [y1,z])
 			elseif sp==sM0
-				append!(col,[preind,preind])
-				append!(row,map(s->newPreind(state,i,s),[s0M,sPP]))
-				append!(val,-y1 .* [y2,z])
+				append!(minirow,map(s->newPreind(state,i,s),[s0M,sPP]))
+				append!(minival,-y1 .* [y2,z])
 			elseif sp==sPP
-				append!(col,[preind,preind])
-				append!(row,map(s->newPreind(state,i,s),[s0M,sM0]))
-				append!(val,-z .* [y2,y1])
+				append!(minirow,map(s->newPreind(state,i,s),[s0M,sM0]))
+				append!(minival,-z .* [y2,y1])
 			end
 		end
+
+		# TODO define helper function
+		# need to sort rows and also add values of coinciding rows
+		perm = sortperm(minirow)
+		minirow = minirow[perm]
+		minival = minival[perm]
+		newrow = Float64[]
+		newval = Float64[]
+		oldr = 0
+		v = 0
+		cnt = 0
+		for r in minirow
+			cnt += 1
+			if r == oldr || oldr == 0
+				v += minival[cnt]
+			else
+				push!(newrow, oldr)
+				push!(newval, v)
+				v = minival[cnt]
+			end
+			oldr = r
+		end
+		push!(newrow, oldr)
+		push!(newval, v)
+
+		push!(col, size(newrow, 1))
+		append!(row, newrow)
+		append!(val, newval)
+		# end
+
 		if (preind % (len / 10)) == 1 || preind == len
-			res += sparse(row,col,val,len,len)
+			num = res.colptr[ncol]
+			for c in col
+				ncol += 1
+				num += c
+				res.colptr[ncol] = num
+			end
+			append!(res.rowval, row)
+			append!(res.nzval, val)
 			col=Int64[]
 			row=Int64[]
 			val=Float64[]
 		end
+		append!(res.rowval, row)
+		append!(res.nzval, val)
+		row=Int64[]
+		val=Float64[]
 	end
 	return res
 end
@@ -472,13 +506,13 @@ println()
 
 println("using Arpack:")
 @time e,v = Arpack.eigs(H,nev=nev,which=:SR)
-println(sort(e))
+println(sort(real(e)))
 println()
 
-println("using ArnoldiMethod:")
-@time e,v = eigs_ArnoldiMethod(H)
-println(sort(e))
-println()
+# println("using ArnoldiMethod:")
+# @time e,v = eigs_ArnoldiMethod(H)
+# println(sort(e))
+# println()
 
 
 #=
