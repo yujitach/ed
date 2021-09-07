@@ -1,0 +1,13 @@
+#!/bin/bash
+#PBS -N ed
+#PBS -e /lustre/work/yuji.tachikawa/ed/et-err.txt
+#PBS -o /lustre/work/yuji.tachikawa/ed/ed-out.txt
+#PBS -l select=1:ncpus=25:mem=1400gb
+#PBS -l walltime=24:00:00
+#PBS -u yuji.tachikawa
+#PBS -M yuji.tachikawa@ipmu.jp
+#PBS -m ae
+#PBS -q mini2
+cd /home/yuji.tachikawa/ed/
+/usr/local/bin/julia --threads 25 ed_YL_mem.jl
+
