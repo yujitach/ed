@@ -1,8 +1,8 @@
 #!/bin/bash
 #PBS -N ed
-#PBS -e /lustre/work/yuji.tachikawa/ed/et-err.txt
+#PBS -e /lustre/work/yuji.tachikawa/ed/ed-err.txt
 #PBS -o /lustre/work/yuji.tachikawa/ed/ed-out.txt
-#PBS -l select=1:ncpus=25:mem=1400gb
+#PBS -l select=1:ncpus=50:mem=1400gb
 #PBS -l walltime=24:00:00
 #PBS -u yuji.tachikawa
 #PBS -M yuji.tachikawa@ipmu.jp
