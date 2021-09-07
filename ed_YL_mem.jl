@@ -14,8 +14,8 @@ const dataPath = "data/"
 # const nev = parse(Int64, ARGS[2])
 # const dataPath = "/n/holyscratch01/yin_lab/Users/yhlin/ed/" # NOTE If on cluster set to scratch space
 
-const eigSolver = "KrylovKit" # "Arpack" "ArnoldiMethod"
-const onlyT = false # compute eigenstates of H and measure T but not ρ
+const eigSolver = "Arpack" # "Arpack" "ArnoldiMethod" "KrylovKit"
+const onlyT = true # compute eigenstates of H and measure T but not ρ
 const buildSparse = true # measure ρ with sparse matrices and not LinearMap
 
 
@@ -561,9 +561,17 @@ if ispath(eigPath)
 end
 
 if !ispath(eigPath) || length(e) < nev
-	println("build H...")
-	flush(stdout)
-	@time H=buildH(diag_,flag_)
+	HPath = dataPathL * "H.jld2"
+	if ispath(HPath)
+		println("load H...")
+		flush(stdout)
+		@load HPath H
+	else
+		println("build H...")
+		flush(stdout)
+		@time H=buildH(diag_,flag_)
+		@save HPath H
+	end
 	println()
 	flush(stdout)
 
@@ -1222,23 +1230,25 @@ function prepare!(below::Int64)
 	end
 end
 
-const prepZipPath = dataPathL * "prepZip.jld2"
-if ispath(prepZipPath)
-	println("load zipper...")
+if !onlyT
+	const prepZipPath = dataPathL * "prepZip.jld2"
+	if ispath(prepZipPath)
+		println("load zipper...")
+		flush(stdout)
+		@time @load prepZipPath inBasis outBasis ziplen zipFromInd edgeAtDrapeMapping
+	else
+		println("prepare zipper...")
+		flush(stdout)
+		inBasis = basis
+		@time outBasis = getExtendedBasis(basisLego_, L, 1)
+		ziplen = length(outBasis)
+		zipFromInd = Dict{Int64,Int32}((outBasis[x],Int32(x)) for x in 1 : ziplen)
+		edgeAtDrapeMapping = zeros(Int8,ziplen)
+		@time @save prepZipPath inBasis outBasis ziplen zipFromInd edgeAtDrapeMapping
+	end
+	println()
 	flush(stdout)
-	@time @load prepZipPath inBasis outBasis ziplen zipFromInd edgeAtDrapeMapping
-else
-	println("prepare zipper...")
-	flush(stdout)
-	inBasis = basis
-	@time outBasis = getExtendedBasis(basisLego_, L, 1)
-	ziplen = length(outBasis)
-	zipFromInd = Dict{Int64,Int32}((outBasis[x],Int32(x)) for x in 1 : ziplen)
-	edgeAtDrapeMapping = zeros(Int8,ziplen)
-	@time @save prepZipPath inBasis outBasis ziplen zipFromInd edgeAtDrapeMapping
 end
-println()
-flush(stdout)
 
 function ρMatrix(v)
 	if buildSparse
