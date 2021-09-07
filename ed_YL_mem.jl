@@ -16,7 +16,7 @@ const dataPath = "data/"
 
 const eigSolver = "Arpack" # "Arpack" "ArnoldiMethod" "KrylovKit"
 const onlyT = true # compute eigenstates of H and measure T but not ρ
-const buildSparse = true # measure ρ with sparse matrices and not LinearMap
+const buildSparse = true # use sparse matrices and not LinearMap
 
 
 #=
@@ -530,6 +530,74 @@ function buildH(diag,flag)
 	return res
 end
 
+function Hfunc!(C,B,diag::Vector{Float32},flag::Vector{Int32})
+	Threads.@threads for preind = 1 : len
+		C[preind] = diag[preind] * B[preind]
+	end
+	for i = 1 : L
+		Threads.@threads for preind = 1 : len
+			ind = basis[preind]
+			state=stateFromInd(ind)
+			sp=localStatePair(state,i)
+			if sp==sXX  && isρ1ρ(flag,preind,i)
+				C[preind]-= ξ * (
+				     y1 * B[newPreind(state,i,sPM)] +
+					 y2 * B[newPreind(state,i,sMP)] +
+					 x  * B[newPreind(state,i,s00)]
+			    )
+			elseif sp==sPM
+				C[preind]-= y1*(
+					 ξ * B[newPreind(state,i,sXX)] +
+					 y2* B[newPreind(state,i,sMP)] +
+					 x * B[newPreind(state,i,s00)]
+			    )
+			elseif sp==sMP
+				C[preind]-= y2*(
+					 ξ * B[newPreind(state,i,sXX)] +
+					 y1* B[newPreind(state,i,sPM)] +
+					 x * B[newPreind(state,i,s00)]
+			    )
+			elseif sp==s00
+				C[preind]-= x*(
+					 ξ * B[newPreind(state,i,sXX)] +
+					 y1* B[newPreind(state,i,sPM)] +
+					 y2* B[newPreind(state,i,sMP)]
+			    )
+			elseif sp==s0P
+				C[preind]-= y1*(
+					y2 * B[newPreind(state,i,sP0)] +
+					z  * B[newPreind(state,i,sMM)]
+				)
+			elseif sp==sP0
+				C[preind]-= y2*(
+					y1 * B[newPreind(state,i,s0P)] +
+					z  * B[newPreind(state,i,sMM)]
+				)
+			elseif sp==sMM
+				C[preind]-= z*(
+					y1 * B[newPreind(state,i,s0P)] +
+					y2 * B[newPreind(state,i,sP0)]
+				)
+			elseif sp==s0M
+				C[preind]-= y2*(
+					y1 * B[newPreind(state,i,sM0)] +
+					z  * B[newPreind(state,i,sPP)]
+				)
+			elseif sp==sM0
+				C[preind]-= y1*(
+					y2 * B[newPreind(state,i,s0M)] +
+					z  * B[newPreind(state,i,sPP)]
+				)
+			elseif sp==sPP
+				C[preind]-= z*(
+					y2 * B[newPreind(state,i,s0M)] +
+					y1 * B[newPreind(state,i,sM0)]
+				)
+			end
+		end
+	end
+end
+
 
 #=
 Diagonalize Hamiltonian.
@@ -561,19 +629,23 @@ if ispath(eigPath)
 end
 
 if !ispath(eigPath) || length(e) < nev
-	HPath = dataPathL * "H.jld2"
-	if ispath(HPath)
-		println("load H...")
+	if buildSparse
+		HPath = dataPathL * "H.jld2"
+		if ispath(HPath)
+			println("load H...")
+			flush(stdout)
+			@load HPath H
+		else
+			println("build H...")
+			flush(stdout)
+			@time H=buildH(diag_,flag_)
+			@save HPath H
+		end
+		println()
 		flush(stdout)
-		@load HPath H
 	else
-		println("build H...")
-		flush(stdout)
-		@time H=buildH(diag_,flag_)
-		@save HPath H
+		H=LinearMap((C,B)->Hfunc!(C,B,diag_,flag_),len,ismutating=true,issymmetric=true,isposdef=false)
 	end
-	println()
-	flush(stdout)
 
 	println("compute eigen...")
 	println()
