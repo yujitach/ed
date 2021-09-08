@@ -7,8 +7,9 @@ using BenchmarkTools
 using JLD2
 
 const L = 18
-const nev = 1
-const dataPath = "data/"
+const nev = 150
+# const dataPath = "data/"
+const dataPath = "/lustre/work/yuji.tachikawa/ed/data/" # NOTE If on cluster set to scratch space
 
 # const L = parse(Int64, ARGS[1])
 # const nev = parse(Int64, ARGS[2])
@@ -666,12 +667,12 @@ if !ispath(eigPath) || length(e) < nev
 		flush(stdout)
 		@time e,v = eigs_KrylovKit(H)
 		println(sort(e))
-		@time @save eigPath e v
 	else
 		println("invalid eigensolver...bye")
 		flush(stdout)
 		exit()
 	end
+	@time @save eigPath e v
 end
 if length(e) > nev
 	e = e[1:nev]
