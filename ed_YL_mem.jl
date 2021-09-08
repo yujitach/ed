@@ -6,10 +6,12 @@ using KrylovKit
 using BenchmarkTools
 using JLD2
 
+const MyInt = Int64
+
 const L = 18
-const nev = 150
+const nev = 1
 # const dataPath = "data/"
-const dataPath = "/lustre/work/yuji.tachikawa/ed/data/" # NOTE If on cluster set to scratch space
+const dataPath = "/lustre/work/yinghsuan.lin/ed/data/" # NOTE If on cluster set to scratch space
 
 # const L = parse(Int64, ARGS[1])
 # const nev = parse(Int64, ARGS[2])
@@ -246,9 +248,9 @@ function trailingXs(state::Int64,L::Int64=L)
 	return L-i
 end
 
-flag_ = zeros(Int32,len)
+flag_ = zeros(MyInt,len)
 
-function setFlag!(flag::Vector{Int32},preind::Int64,L::Int64=L)
+function setFlag!(flag::Vector{MyInt},preind::Int64,L::Int64=L)
 	ind = basis[preind]
 	state=ind-1
 	below=(state>>(2*(L+1)))
@@ -347,11 +349,11 @@ function localStatePair(state::Int64,i::Int64,L::Int64=L)
 	return a,b
 end
 
-function isρ1ρ(flag::Vector{Int32},preind::Int64,i::Int64)
+function isρ1ρ(flag::Vector{MyInt},preind::Int64,i::Int64)
 	return ((flag[preind] >> (i-1)) & 1) == 1
 end
 
-function computeDiag!(diag::Vector{Float32},flag::Vector{Int32},preind::Int64)
+function computeDiag!(diag::Vector{Float32},flag::Vector{MyInt},preind::Int64)
 	ind = basis[preind]
 	state=stateFromInd(ind)
 	diag[preind]=0
@@ -428,8 +430,8 @@ newPreind(state,i,sp) = fromInd[newInd(state,i,sp)]
 TT = Union{Vector{Float32},Vector{Float16}}
 
 function sortAndAppendColumn!(
-	col::Vector{Int32},
-	row::Vector{Int32},
+	col::Vector{MyInt},
+	row::Vector{MyInt},
 	val::TT,
 	miniRow::Vector{Int64},
 	miniVal::TT
@@ -437,7 +439,7 @@ function sortAndAppendColumn!(
 	perm = sortperm(miniRow)
 	miniRow = miniRow[perm]
 	miniVal = miniVal[perm]
-	newMiniRow = Int32[]
+	newMiniRow = MyInt[]
 	newMinival = Float32[]
 	oldr = 0
 	v = 0
@@ -461,9 +463,9 @@ function sortAndAppendColumn!(
 end
 
 function buildH(diag,flag)
-	res = sparse(Int32[],Int32[],Float32[],len,len)
-	col=Int32[]
-	row=Int32[]
+	res = sparse(MyInt[],MyInt[],Float32[],len,len)
+	col=MyInt[]
+	row=MyInt[]
 	val=Float32[]
 	ncol = 1
 	for preind = 1 : len
@@ -519,19 +521,19 @@ function buildH(diag,flag)
 			end
 			append!(res.rowval, row)
 			append!(res.nzval, val)
-			col=Int32[]
-			row=Int32[]
+			col=MyInt[]
+			row=MyInt[]
 			val=Float32[]
 		end
 		append!(res.rowval, row)
 		append!(res.nzval, val)
-		row=Int32[]
+		row=MyInt[]
 		val=Float32[]
 	end
 	return res
 end
 
-function Hfunc!(C,B,diag::Vector{Float32},flag::Vector{Int32})
+function Hfunc!(C,B,diag::Vector{Float32},flag::Vector{MyInt})
 	Threads.@threads for preind = 1 : len
 		C[preind] = diag[preind] * B[preind]
 	end
@@ -1016,8 +1018,8 @@ function attach!(C,B)
 end
 
 function buildAttach()
-	col=Int32[]
-	row=Int32[]
+	col=MyInt[]
+	row=MyInt[]
 	val=Float16[]
 	for preind = 1 : len
 		ind = basis[preind]
@@ -1103,9 +1105,9 @@ function zip!(C,B,i::Int64)
 end
 
 function buildZip(i::Int64)
-	res = sparse(Int32[],Int32[],Float16[],ziplen,ziplen)
-	col=Int32[]
-	row=Int32[]
+	res = sparse(MyInt[],MyInt[],Float16[],ziplen,ziplen)
+	col=MyInt[]
+	row=MyInt[]
 	val=Float16[]
 	ncol = 1
 	for preind = 1 : ziplen
@@ -1135,13 +1137,13 @@ function buildZip(i::Int64)
 			end
 			append!(res.rowval, row)
 			append!(res.nzval, val)
-			col=Int32[]
-			row=Int32[]
+			col=MyInt[]
+			row=MyInt[]
 			val=Float16[]
 		end
 		append!(res.rowval, row)
 		append!(res.nzval, val)
-		row=Int32[]
+		row=MyInt[]
 		val=Float16[]
 	end
 	return res
@@ -1181,8 +1183,8 @@ function detach!(C,B)
 end
 
 function buildDetach()
-	col=Int32[]
-	row=Int32[]
+	col=MyInt[]
+	row=MyInt[]
 	val=Float16[]
 	for preind = 1 : ziplen
 		ind = inBasis[preind]
@@ -1289,7 +1291,7 @@ function prepare!(below::Int64)
 			if below > 0
 				global outBasis = getExtendedBasis(basisLego_, L, below+1)
 			end
-			global zipFromInd = Dict((outBasis[x],Int32(x)) for x in 1 : ziplen)
+			global zipFromInd = Dict((outBasis[x],MyInt(x)) for x in 1 : ziplen)
 		end
 
 		global edgeAtDrapeMapping
@@ -1315,7 +1317,7 @@ if !onlyT
 		inBasis = basis
 		@time outBasis = getExtendedBasis(basisLego_, L, 1)
 		ziplen = length(outBasis)
-		zipFromInd = Dict{Int64,Int32}((outBasis[x],Int32(x)) for x in 1 : ziplen)
+		zipFromInd = Dict{Int64,MyInt}((outBasis[x],MyInt(x)) for x in 1 : ziplen)
 		edgeAtDrapeMapping = zeros(Int8,ziplen)
 		@time @save prepZipPath inBasis outBasis ziplen zipFromInd edgeAtDrapeMapping
 	end
