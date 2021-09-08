@@ -6,10 +6,10 @@ using KrylovKit
 using BenchmarkTools
 using JLD2
 
-const MyInt = Int64
+const MyInt = UInt32
 
 const L = 18
-const nev = 1
+const nev = 8
 # const dataPath = "data/"
 const dataPath = "/lustre/work/yinghsuan.lin/ed/data/" # NOTE If on cluster set to scratch space
 
@@ -17,7 +17,7 @@ const dataPath = "/lustre/work/yinghsuan.lin/ed/data/" # NOTE If on cluster set 
 # const nev = parse(Int64, ARGS[2])
 # const dataPath = "/n/holyscratch01/yin_lab/Users/yhlin/ed/" # NOTE If on cluster set to scratch space
 
-const eigSolver = "Arpack" # "Arpack" "ArnoldiMethod" "KrylovKit"
+const eigSolver = "KrylovKit" # "Arpack" "ArnoldiMethod" "KrylovKit"
 const onlyT = true # compute eigenstates of H and measure T but not ρ
 const buildSparse = true # use sparse matrices and not LinearMap
 
@@ -248,6 +248,7 @@ function trailingXs(state::Int64,L::Int64=L)
 	return L-i
 end
 
+# flag_ = zeros(MyInt,len)
 flag_ = zeros(MyInt,len)
 
 function setFlag!(flag::Vector{MyInt},preind::Int64,L::Int64=L)
