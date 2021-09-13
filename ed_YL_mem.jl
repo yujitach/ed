@@ -6,10 +6,11 @@ using KrylovKit
 using BenchmarkTools
 using JLD2
 
-const MyInt = UInt32
+const MyInt = Int64
+const MyFloat = Float32
 
 const L = 18
-const nev = 8
+const nev = 150
 # const dataPath = "data/"
 const dataPath = "/lustre/work/yinghsuan.lin/ed/data/" # NOTE If on cluster set to scratch space
 
@@ -17,7 +18,7 @@ const dataPath = "/lustre/work/yinghsuan.lin/ed/data/" # NOTE If on cluster set 
 # const nev = parse(Int64, ARGS[2])
 # const dataPath = "/n/holyscratch01/yin_lab/Users/yhlin/ed/" # NOTE If on cluster set to scratch space
 
-const eigSolver = "KrylovKit" # "Arpack" "ArnoldiMethod" "KrylovKit"
+const eigSolver = "Arpack" # "Arpack" "ArnoldiMethod" "KrylovKit"
 const onlyT = true # compute eigenstates of H and measure T but not ρ
 const buildSparse = true # use sparse matrices and not LinearMap
 
@@ -52,6 +53,10 @@ end
 println()
 flush(stdout)
 println("exact diagonalization of L=", L, " with build sparse=", buildSparse, " and keeping nev=", nev)
+println()
+flush(stdout)
+
+println("available number of threads: ", Threads.nthreads())
 println()
 flush(stdout)
 
@@ -248,7 +253,6 @@ function trailingXs(state::Int64,L::Int64=L)
 	return L-i
 end
 
-# flag_ = zeros(MyInt,len)
 flag_ = zeros(MyInt,len)
 
 function setFlag!(flag::Vector{MyInt},preind::Int64,L::Int64=L)
@@ -301,7 +305,7 @@ function setFlag!(flag::Vector{MyInt},preind::Int64,L::Int64=L)
 	end
 end
 
-diag_ = zeros(Float32,len)
+diag_ = zeros(MyFloat,len)
 
 const ζ = (√(13)+3)/2
 const ξ = 1/√ζ
@@ -354,7 +358,7 @@ function isρ1ρ(flag::Vector{MyInt},preind::Int64,i::Int64)
 	return ((flag[preind] >> (i-1)) & 1) == 1
 end
 
-function computeDiag!(diag::Vector{Float32},flag::Vector{MyInt},preind::Int64)
+function computeDiag!(diag::Vector{MyFloat},flag::Vector{MyInt},preind::Int64)
 	ind = basis[preind]
 	state=stateFromInd(ind)
 	diag[preind]=0
@@ -405,10 +409,6 @@ function newInd(state::Int64,i::Int64,sp::Tuple{Int64, Int64})
 	end
 end
 
-println("available number of threads: ", Threads.nthreads())
-println()
-flush(stdout)
-
 const prepPath = dataPathL * "prep/prep.jld2"
 if ispath(prepPath)
 	println("load flag and diag...")
@@ -428,7 +428,7 @@ flush(stdout)
 
 newPreind(state,i,sp) = fromInd[newInd(state,i,sp)]
 
-TT = Union{Vector{Float32},Vector{Float16}}
+TT = Union{Vector{MyFloat},Vector{Float16}}
 
 function sortAndAppendColumn!(
 	col::Vector{MyInt},
@@ -441,7 +441,7 @@ function sortAndAppendColumn!(
 	miniRow = miniRow[perm]
 	miniVal = miniVal[perm]
 	newMiniRow = MyInt[]
-	newMinival = Float32[]
+	newMinival = MyFloat[]
 	oldr = 0
 	v = 0
 	cnt = 0
@@ -464,10 +464,10 @@ function sortAndAppendColumn!(
 end
 
 function buildH(diag,flag)
-	res = sparse(MyInt[],MyInt[],Float32[],len,len)
+	res = sparse(MyInt[],MyInt[],MyFloat[],len,len)
 	col=MyInt[]
 	row=MyInt[]
-	val=Float32[]
+	val=MyFloat[]
 	ncol = 1
 	for preind = 1 : len
 		ind = basis[preind]
@@ -524,17 +524,17 @@ function buildH(diag,flag)
 			append!(res.nzval, val)
 			col=MyInt[]
 			row=MyInt[]
-			val=Float32[]
+			val=MyFloat[]
 		end
 		append!(res.rowval, row)
 		append!(res.nzval, val)
 		row=MyInt[]
-		val=Float32[]
+		val=MyFloat[]
 	end
 	return res
 end
 
-function Hfunc!(C,B,diag::Vector{Float32},flag::Vector{MyInt})
+function Hfunc!(C,B,diag::Vector{MyFloat},flag::Vector{MyInt})
 	Threads.@threads for preind = 1 : len
 		C[preind] = diag[preind] * B[preind]
 	end
@@ -614,7 +614,7 @@ function eigs_ArnoldiMethod(H)
 end
 
 function eigs_KrylovKit(H)
-	val,vecs,info = KrylovKit.eigsolve(H,rand(eltype(H),size(H,1)),nev,:SR;issymmetric=true, krylovdim=2*nev)
+	val,vecs,info = KrylovKit.eigsolve(H,rand(eltype(H),size(H,1)),nev,:SR;issymmetric=true, krylovdim=2*nev+1)
 	mat = zeros(size(vecs,1),len)
 	mat = zeros(len,size(vecs,1))
 	cnt = 1
@@ -1443,7 +1443,7 @@ function ρMatrix(v)
 		@time prepare!(0)
 		ρ = LinearMap((C,B)->attach!(C,B),ziplen,len,ismutating=true,issymmetric=false,isposdef=false)
 		println("act attach...")
-		@time u = Matrix(ρ * u)
+		@time u = Matrix(ρ * v)
 		println()
 		flush(stdout)
 		for i = 1 : L
@@ -1532,7 +1532,7 @@ function diagonalizeHT(e,v,T)
 
 	smallH = Matrix(diagm(e))
 	smallT = Matrix(adjoint(v)*T*v)
-	smalle,smallv = eigen(smallH+smallT)
+	smalle,smallv = eigen(smallH*L*10+smallT)
 
 	Hs = real(diag(adjoint(smallv)*smallH*smallv))
 	Ts = complex(diag(adjoint(smallv)*smallT*smallv))
@@ -1552,7 +1552,7 @@ function diagonalizeHTρ(e,v,T)
 	smallH = Matrix(diagm(e))
 	smallρ = ρMatrix(v)
 	smallT = Matrix(adjoint(v)*T*v)
-	smalle,smallv = eigen(smallH+smallT+smallρ)
+	smalle,smallv = eigen(smallH*L*10+smallT+smallρ)
 
 	Hs = real(diag(adjoint(smallv)*smallH*smallv))
 	Ts = complex(diag(adjoint(smallv)*smallT*smallv))
