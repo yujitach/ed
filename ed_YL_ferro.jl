@@ -7,7 +7,7 @@ using BenchmarkTools
 using JLD2
 
 const MyInt = Int64
-const MyFloat = Float64
+const MyFloat = Float32
 
 const L = 8
 const nev = 200
@@ -1563,6 +1563,9 @@ function diagonalizeHT(e,v,T)
 	s*=string(HPs[1][1])
 	# println(mathematicaMatrix(HPs))
 	println(mathematicaMatrix( filter(x->abs(x[1])<0.001, HPs) ))
+	println("Number of ground states: ", length( filter(x->abs(x[1])<0.001, HPρs) ))
+	println()
+	flush(stdout)
 end
 
 function diagonalizeHTρ(e,v,T)
@@ -1601,7 +1604,7 @@ end
 println()
 flush(stdout)
 
-println("Number of ground states from ", eigSolver, ": ", length(filter(x->abs(x)<0.00001,e)))
+println("Number of ground states from ", eigSolver, ": ", length(filter(x->abs(x)<0.001,e)))
 println()
 flush(stdout)
 
