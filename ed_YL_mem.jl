@@ -12,14 +12,14 @@ const MyFloat = Float32
 const L = 18
 const nev = 150
 # const dataPath = "data/"
-const dataPath = "/lustre/work/yinghsuan.lin/ed/data/" # NOTE If on cluster set to scratch space
 
 # const L = parse(Int64, ARGS[1])
 # const nev = parse(Int64, ARGS[2])
+const dataPath = "/lustre/work/yinghsuan.lin/ed/data/" # NOTE If on cluster set to scratch space
 # const dataPath = "/n/holyscratch01/yin_lab/Users/yhlin/ed/" # NOTE If on cluster set to scratch space
 
 const eigSolver = "Arpack" # "Arpack" "ArnoldiMethod" "KrylovKit"
-const onlyT = true # compute eigenstates of H and measure T but not ρ
+const onlyT = false # compute eigenstates of H and measure T but not ρ
 const buildSparse = true # use sparse matrices and not LinearMap
 
 

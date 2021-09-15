@@ -7,19 +7,19 @@ using BenchmarkTools
 using JLD2
 
 const MyInt = Int64
-const MyFloat = Float32
+const MyFloat = Float64
 
-const L = 8
-const nev = 200
+const L = 6
+const nev = 1
 const dataPath = "data/"
-# const dataPath = "/lustre/work/yinghsuan.lin/ed/data/" # NOTE If on cluster set to scratch space
 
 # const L = parse(Int64, ARGS[1])
 # const nev = parse(Int64, ARGS[2])
+# const dataPath = "/lustre/work/yinghsuan.lin/ed/data/" # NOTE If on cluster set to scratch space
 # const dataPath = "/n/holyscratch01/yin_lab/Users/yhlin/ed/" # NOTE If on cluster set to scratch space
 
 const eigSolver = "Arpack" # "Arpack" "ArnoldiMethod" "KrylovKit"
-const onlyT = false # compute eigenstates of H and measure T but not ρ
+const onlyT = true # compute eigenstates of H and measure T but not ρ
 const buildSparse = true # use sparse matrices and not LinearMap
 
 
@@ -1563,7 +1563,7 @@ function diagonalizeHT(e,v,T)
 	s*=string(HPs[1][1])
 	# println(mathematicaMatrix(HPs))
 	println(mathematicaMatrix( filter(x->abs(x[1])<0.001, HPs) ))
-	println("Number of ground states: ", length( filter(x->abs(x[1])<0.001, HPρs) ))
+	println("Number of ground states: ", length( filter(x->abs(x[1])<0.001, HPs) ))
 	println()
 	flush(stdout)
 end
@@ -1613,5 +1613,16 @@ flush(stdout)
 # ee,vv = eigen(Matrix(H));
 # println(filter(x->abs(x)<0.1,ee))
 # println("Number of ground states from eigen: ", length(filter(x->abs(x)<0.00001,e)))
+# println()
+# flush(stdout)
+
+# HPath = dataPathL * "H.jld2"
+# @load HPath H
+# println()
+# flush(stdout)
+# @time println("Number of ground states from QR: ", size(H,1) - rank(qr(H)))
+# println()
+# flush(stdout)
+# @time println("Number of ground states from QR: ", size(H,1) - rank(H))
 # println()
 # flush(stdout)
