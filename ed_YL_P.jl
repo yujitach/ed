@@ -10,7 +10,7 @@ const MyInt = Int64
 const MyFloat = Float32
 
 const L = 9
-const P = 0
+const P = 9 # "prepare" mode if P==L and "eigen" mode if P==0, ..., L-1
 const nev = 10
 const dataPath = "data/"
 
@@ -35,6 +35,9 @@ if !ispath(dataPath)
 end
 if !ispath(dataPathL)
 	mkdir(dataPathL)
+end
+if !ispath(dataPathL * "H_P/")
+	mkdir(dataPathL * "H_P/")
 end
 if !ispath(dataPathL * "rhov/")
 	mkdir(dataPathL * "rhov/")
@@ -293,7 +296,7 @@ function BuildPOrbit(pOrbit)
 	end
 end
 
-const pOrbitPath = dataPathL * "p_orbit.jld2"
+const pOrbitPath = dataPathL * "P_orbit.jld2"
 if ispath(pOrbitPath)
 	println("load P orbit...")
 	flush(stdout)
@@ -785,55 +788,70 @@ function eigs_KrylovKit(H)
 	return val,mat
 end
 
-HPath = dataPathL * "H.jld2"
-if ispath(HPath)
-	println("load H...")
+if P == L
+	HPath = dataPathL * "H.jld2"
+	if ispath(HPath)
+		println("load H...")
+		flush(stdout)
+		@load HPath H
+	else
+		println("build H...")
+		flush(stdout)
+		@time H=buildH(diag_,flag_)
+		@save HPath H
+	end
+	println()
 	flush(stdout)
-	@load HPath H
-else
-	println("build H...")
-	flush(stdout)
-	@time H=buildH(diag_,flag_)
-	@save HPath H
-end
-println()
-flush(stdout)
 
-U = buildFixPBasis(P)
-
-# println("Sparse")
-println("compute eigen for P=" * string(P) * "...")
-@time H = real(adjoint(U) * H * U)
-println()
-flush(stdout)
-if eigSolver == "Arpack"
-	println("using Arpack:")
+	println("build H for fixed P...")
+	println()
 	flush(stdout)
-	@time e,v = Arpack.eigs(H,nev=nev,which=:SR)
-	println(sort(real(e)))
-elseif eigSolver == "ArnoldiMethod"
-	println("using ArnoldiMethod:")
+	for p in 0 : L-1
+		println("P=" * string(p))
+		U = buildFixPBasis(p)
+		global H
+		local HP
+		@time HP = real(adjoint(U) * H * U)
+		@save dataPathL * "H_P/H_" * string(p) * ".jld2" HP
+		println()
+		flush(stdout)
+	end
+	println()
 	flush(stdout)
-	@time e,v = eigs_ArnoldiMethod(H)
-	println(sort(e))
-elseif eigSolver == "KrylovKit"
-	println("using KrylovKit:")
-	flush(stdout)
-	@time e,v = eigs_KrylovKit(H)
-	println(sort(e))
 else
-	println("invalid eigensolver...bye")
+	@load dataPathL * "H_P/H_" * string(P) * ".jld2" HP
+	H = HP
+	# println("Sparse")
+	println("compute eigen for P=" * string(P) * "...")
+	println()
 	flush(stdout)
-	exit()
+	if eigSolver == "Arpack"
+		println("using Arpack:")
+		flush(stdout)
+		@time e,v = Arpack.eigs(H,nev=nev,which=:SR)
+		println(sort(real(e)))
+	elseif eigSolver == "ArnoldiMethod"
+		println("using ArnoldiMethod:")
+		flush(stdout)
+		@time e,v = eigs_ArnoldiMethod(H)
+		println(sort(e))
+	elseif eigSolver == "KrylovKit"
+		println("using KrylovKit:")
+		flush(stdout)
+		@time e,v = eigs_KrylovKit(H)
+		println(sort(e))
+	else
+		println("invalid eigensolver...bye")
+		flush(stdout)
+		exit()
+	end
+	if length(e) > nev
+		e = e[1:nev]
+		v = v[:,1:nev]
+	end
+	println()
+	flush(stdout)
 end
-# if length(e) > nev
-# 	e = e[1:nev]
-# 	v = v[:,1:nev]
-# end
-# println()
-# flush(stdout)
-println()
-flush(stdout)
 
 # println("LinearMap")
 # H = LinearMap(adjoint(U)) * LinearMap(H) * LinearMap(U)
