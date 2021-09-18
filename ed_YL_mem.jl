@@ -19,7 +19,7 @@ const dataPath = "/lustre/work/yinghsuan.lin/ed/data/" # NOTE If on cluster set 
 # const dataPath = "/n/holyscratch01/yin_lab/Users/yhlin/ed/" # NOTE If on cluster set to scratch space
 
 const eigSolver = "Arpack" # "Arpack" "ArnoldiMethod" "KrylovKit"
-const onlyT = false # compute eigenstates of H and measure T but not ρ
+const onlyT = true # compute eigenstates of H and measure T but not ρ
 const buildSparse = true # use sparse matrices and not LinearMap
 
 
