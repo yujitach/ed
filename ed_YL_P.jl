@@ -12,7 +12,7 @@ const MyComplex = ComplexF32
 
 const L = 18
 const P = 18 # "prepare" mode if P==L and "eigen" mode if P==0, ..., L-1
-const nev = 10
+const nev = 20
 const dataPath = "data/"
 
 # const L = parse(Int64, ARGS[1])
@@ -21,7 +21,7 @@ const dataPath = "data/"
 # const dataPath = "/lustre/work/yinghsuan.lin/ed/data/" # NOTE If on cluster set to scratch space
 # const dataPath = "/n/holyscratch01/yin_lab/Users/yhlin/ed/" # NOTE If on cluster set to scratch space
 
-const eigSolver = "Arpack" # "Arpack" "ArnoldiMethod" "KrylovKit"
+const eigSolver = "ArnoldiMethod" # "Arpack" "ArnoldiMethod" "KrylovKit"
 const onlyT = true # compute eigenstates of H and measure T but not ρ
 const buildSparse = true # use sparse matrices and not LinearMap
 
@@ -39,6 +39,9 @@ if !ispath(dataPathL)
 end
 if !ispath(dataPathL * "H_P/")
 	mkdir(dataPathL * "H_P/")
+end
+if !ispath(dataPathL * "eig_P/")
+	mkdir(dataPathL * "eig_P/")
 end
 if !ispath(dataPathL * "rhov/")
 	mkdir(dataPathL * "rhov/")
@@ -765,18 +768,6 @@ function eigs_ArnoldiMethod(H)
 	return e,v
 end
 
-# function eigs_KrylovKit(H)
-# 	val,vecs,info = KrylovKit.eigsolve(H,rand(eltype(H),size(H,1)),nev,:SR;issymmetric=true, krylovdim=2*nev+1)
-# 	mat = zeros(size(vecs,1),len)
-# 	mat = zeros(len,size(vecs,1))
-# 	cnt = 1
-# 	for v in vecs
-# 		mat[:,cnt] = v
-# 		cnt += 1
-# 	end
-# 	return val,mat
-# end
-
 function eigs_KrylovKit(H)
 	val,vecs,info = KrylovKit.eigsolve(H,rand(eltype(H),size(H,1)),nev,:SR;issymmetric=true, krylovdim=2*nev+1)
 	mat = zeros(size(vecs,1),pLen)
@@ -846,6 +837,8 @@ else
 		flush(stdout)
 		exit()
 	end
+	const eigPPath = dataPathL * "eig_P/eig_" * string(P) * ".jld2"
+	@time @save eigPPath e v
 	if length(e) > nev
 		e = e[1:nev]
 		v = v[:,1:nev]
@@ -853,6 +846,7 @@ else
 	println()
 	flush(stdout)
 end
+
 
 # println("LinearMap")
 # H = LinearMap(adjoint(U)) * LinearMap(H) * LinearMap(U)
