@@ -806,7 +806,7 @@ if P == L
 	println("build H for fixed P...")
 	println()
 	flush(stdout)
-	for p in 0 : floor(L/2)
+	for p in 0 : Int64(floor(L/2))
 		println("P=" * string(p))
 		U = buildFixPBasis(p)
 		global H
