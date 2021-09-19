@@ -8,9 +8,10 @@ using JLD2
 
 const MyInt = Int64
 const MyFloat = Float32
+const MyComplex = ComplexF32
 
-const L = 9
-const P = 9 # "prepare" mode if P==L and "eigen" mode if P==0, ..., L-1
+const L = 18
+const P = 18 # "prepare" mode if P==L and "eigen" mode if P==0, ..., L-1
 const nev = 10
 const dataPath = "data/"
 
@@ -506,7 +507,7 @@ flush(stdout)
 
 newPreind(state,i,sp) = fromInd[newInd(state,i,sp)]
 
-TT = Union{Vector{MyFloat},Vector{Float16},Vector{ComplexF64}}
+TT = Union{Vector{MyFloat},Vector{Float16},Vector{MyComplex}}
 
 stripT(::Type{Vector{T}}) where {T} = T
 
@@ -686,7 +687,7 @@ end
 # function buildFixPBasis(p::Int64)
 # 	col=MyInt[]
 # 	row=MyInt[]
-# 	val=ComplexF64[]
+# 	val=MyComplex[]
 # 	for pInd = 1 : pLen
 # 		orbit = pOrbit[pInd]
 # 		oLen = length(orbit)
@@ -707,14 +708,14 @@ end
 # end
 
 function buildFixPBasis(p::Int64)
-	res = sparse(MyInt[],MyInt[],ComplexF64[],len,pLen)
+	res = sparse(MyInt[],MyInt[],MyComplex[],len,pLen)
 	col=MyInt[]
 	row=MyInt[]
-	val=ComplexF64[]
+	val=MyComplex[]
 	ncol = 1
 	for pInd = 1 : pLen
 		miniRow = MyInt[]
-		miniVal = ComplexF64[]
+		miniVal = MyComplex[]
 		
 		orbit = pOrbit[pInd]
 		oLen = length(orbit)
@@ -743,12 +744,12 @@ function buildFixPBasis(p::Int64)
 			append!(res.nzval, val)
 			col=MyInt[]
 			row=MyInt[]
-			val=ComplexF64[]
+			val=MyComplex[]
 		end
 		append!(res.rowval, row)
 		append!(res.nzval, val)
 		row=MyInt[]
-		val=ComplexF64[]
+		val=MyComplex[]
 	end
 	return res
 end
