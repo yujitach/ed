@@ -8,29 +8,36 @@ using JLD2
 
 const MyInt = Int64
 const MyFloat = Float32
-const MyComplex = ComplexF32
+const ZipFloat = Float16
+const MyComplex = ComplexF64
 
-const L = 18
-const P = 18 # "prepare" mode if P==L and "eigen" mode if P==0, ..., L-1
-const nev = 20
-const dataPath = "data/"
+# const L = 6
+# const P = 0 # "prepare" mode if P==-1, "eigen" mode if P==0, ..., L-1, and P==L computes eigens for all these Ps.
+# const nev = 10
+# const Q = 0
+# const dataPath = "data/"
 
-# const L = parse(Int64, ARGS[1])
-# const P = parse(Int64, ARGS[2])
-# const nev = parse(Int64, ARGS[3])
-# const dataPath = "/lustre/work/yinghsuan.lin/ed/data/" # NOTE If on cluster set to scratch space
+const L = parse(Int64, ARGS[1])
+const P = parse(Int64, ARGS[2])
+const nev = parse(Int64, ARGS[3])
+if length(ARGS) < 4
+	const Q = 0
+else
+	const Q = parse(Int64, ARGS[4])
+end
+const dataPath = "/lustre/work/yinghsuan.lin/ed/data4/" # NOTE If on cluster set to scratch space
+
 # const dataPath = "/n/holyscratch01/yin_lab/Users/yhlin/ed/" # NOTE If on cluster set to scratch space
 
-const eigSolver = "ArnoldiMethod" # "Arpack" "ArnoldiMethod" "KrylovKit"
-const onlyT = true # compute eigenstates of H and measure T but not ρ
-const buildSparse = true # use sparse matrices and not LinearMap
+const eigSolver = "Arpack" # "Arpack" "ArnoldiMethod" "KrylovKit"
+const onlyT = false # compute eigenstates of H and measure T but not ρ
+const buildSparse = false # use sparse matrices and not LinearMap
 
 
 #=
 Save/load hard disk to reduce memory usage when measuring ρ.
 =#
-
-const dataPathL = dataPath * string(L) * "/"
+const dataPathL = dataPath * string(L) * "_" * string(Q) * "/"
 if !ispath(dataPath)
 	mkdir(dataPath)
 end
@@ -222,9 +229,9 @@ end
 # basis of states (not inds)
 function getBasisLego(basisLego::Dict{Tuple{Int8,Bool,Bool,Int8},Vector{Int64}}, L::Int64)::Vector{Int64}
 	res = []
-	append!(res, getBasisLego(basisLego, L, true, true, 0))
-	append!(res, getBasisLego(basisLego, L, false, false, 0))
-	if iseven(L)
+	append!(res, getBasisLego(basisLego, L, true, true, Q))
+	append!(res, getBasisLego(basisLego, L, false, false, Q))
+	if iseven(L) && Q == 0
 		append!(res, [0, 1])
 	end
 	sort!(res)
@@ -510,7 +517,7 @@ flush(stdout)
 
 newPreind(state,i,sp) = fromInd[newInd(state,i,sp)]
 
-TT = Union{Vector{MyFloat},Vector{Float16},Vector{MyComplex}}
+TT = Union{Vector{MyFloat},Vector{ZipFloat},Vector{MyComplex}}
 
 stripT(::Type{Vector{T}}) where {T} = T
 
@@ -780,7 +787,7 @@ function eigs_KrylovKit(H)
 	return val,mat
 end
 
-if P == L
+if P == -1
 	HPath = dataPathL * "H.jld2"
 	if ispath(HPath)
 		println("load H...")
@@ -800,973 +807,1113 @@ if P == L
 	flush(stdout)
 	for p in 0 : Int64(floor(L/2))
 		println("P=" * string(p))
+		local U
 		U = buildFixPBasis(p)
 		global H
 		local HP
-		@time HP = real(adjoint(U) * H * U)
-		@save dataPathL * "H_P/H_" * string(p) * ".jld2" HP
+		@time HP = adjoint(U) * H * U
+		@save dataPathL * "H_P/H_" * string(p) * ".jld2" HP U
 		println()
 		flush(stdout)
 	end
 	println()
 	flush(stdout)
 else
-	@load dataPathL * "H_P/H_" * string(P) * ".jld2" HP
-	H = HP
-	# println("Sparse")
-	println("compute eigen for P=" * string(P) * "...")
-	println()
-	flush(stdout)
-	if eigSolver == "Arpack"
-		println("using Arpack:")
-		flush(stdout)
-		@time e,v = Arpack.eigs(H,nev=nev,which=:SR)
-		println(sort(real(e)))
-	elseif eigSolver == "ArnoldiMethod"
-		println("using ArnoldiMethod:")
-		flush(stdout)
-		@time e,v = eigs_ArnoldiMethod(H)
-		println(sort(e))
-	elseif eigSolver == "KrylovKit"
-		println("using KrylovKit:")
-		flush(stdout)
-		@time e,v = eigs_KrylovKit(H)
-		println(sort(e))
+	if P == L
+		Ps = 0 : Int64(floor(L/2))
 	else
-		println("invalid eigensolver...bye")
+		Ps = [P]
+	end
+	for P in Ps
+		global e
+		global v
+		local eigPPath
+		eigPPath = dataPathL * "eig_P/eig_" * string(P) * ".jld2"
+		if ispath(eigPPath)
+			println("load eigen...")
+			flush(stdout)
+			@time @load eigPPath e v
+		end
+		if !ispath(eigPPath) || length(e) < nev
+			if !ispath(dataPathL * "H_P/H_" * string(P) * ".jld2")
+				throw("Run P=-1 first")
+			end
+			@load dataPathL * "H_P/H_" * string(P) * ".jld2" HP
+			local H
+			H = HP
+			# println("Sparse")
+			println("compute eigen for P=" * string(P) * "...")
+			println()
+			flush(stdout)
+			if eigSolver == "Arpack"
+				println("using Arpack:")
+				flush(stdout)
+				@time e,v = Arpack.eigs(H,nev=nev,which=:SR)
+				e = real(e)
+				println(sort(e))
+			elseif eigSolver == "ArnoldiMethod"
+				println("using ArnoldiMethod:")
+				flush(stdout)
+				@time e,v = eigs_ArnoldiMethod(H)
+				e = real(e)
+				println(sort(e))
+			elseif eigSolver == "KrylovKit"
+				println("using KrylovKit:")
+				flush(stdout)
+				@time e,v = eigs_KrylovKit(H)
+				e = real(e)
+				println(sort(e))
+			else
+				println("invalid eigensolver...bye")
+				flush(stdout)
+				exit()
+			end
+			
+			perm = sortperm(real(e))
+			e = e[perm]
+			v = v[:,perm]
+			@time @save eigPPath e v
+		end
+		if length(e) > nev
+			e = e[1:nev]
+			v = v[:,1:nev]
+		end
+		println()
 		flush(stdout)
-		exit()
 	end
-	const eigPPath = dataPathL * "eig_P/eig_" * string(P) * ".jld2"
-	@time @save eigPPath e v
-	if length(e) > nev
-		e = e[1:nev]
-		v = v[:,1:nev]
+
+	if P == L
+		eAll = Array{MyFloat}(undef, 0)
+		vAll = Array{MyFloat}(undef, pLen, 0)
+		for P = 0 : Int64(floor(L/2))
+			local eigPPath
+			eigPPath = dataPathL * "eig_P/eig_" * string(P) * ".jld2"
+			@load eigPPath e v
+			if length(e) > nev
+				e = e[1:nev]
+				v = v[:,1:nev]
+			end
+			append!(eAll, e)
+			global vAll = hcat(vAll, v)
+		end
+		e = eAll
+		v = vAll
 	end
-	println()
-	flush(stdout)
+
+	if !onlyT
+		global e
+		global v
+		local U
+		if P == L
+			eAll = Array{MyFloat}(undef, 0)
+			vAll = Array{MyFloat}(undef, len, 0)
+			for P = 0 : Int64(floor(L/2))
+				local eigPPath
+				eigPPath = dataPathL * "eig_P/eig_" * string(P) * ".jld2"
+				@load eigPPath e v
+				if length(e) > nev
+					e = e[1:nev]
+					v = v[:,1:nev]
+				end
+				append!(eAll, e)
+				@load dataPathL * "H_P/H_" * string(P) * ".jld2" U
+				v = U * v
+				global vAll = hcat(vAll, v)
+			end
+			e = eAll
+			v = vAll
+		else
+			eigPPath = dataPathL * "eig_P/eig_" * string(P) * ".jld2"
+			@load eigPPath e v
+			if length(e) > nev
+				e = e[1:nev]
+				v = v[:,1:nev]
+			end
+			@load dataPathL * "H_P/H_" * string(P) * ".jld2" U
+			v = U * v
+		end
+	end
 end
 
 
-# println("LinearMap")
-# H = LinearMap(adjoint(U)) * LinearMap(H) * LinearMap(U)
-# @time e,v = Arpack.eigs(H,nev=nev,which=:SR)
-# println(sort(real(e)))
-# println()
+#=
+Divide and conquer for extended chain.
+=#
 
-# const eigPath = dataPathL * "eig.jld2"
-# if ispath(eigPath)
-# 	println("load eigen...")
-# 	flush(stdout)
-# 	@time @load eigPath e v
-# end
+function extendedInd(
+	state1::Int64,
+	state2::Int64,
+	L1::Int64,
+	L2::Int64,
+	start::Int64,
+	below::Int64,
+	s1::Int64,
+	s2::Int64)
 
-# if !ispath(eigPath) || length(e) < nev
-# 	if buildSparse
-# 		HPath = dataPathL * "H.jld2"
-# 		if ispath(HPath)
-# 			println("load H...")
-# 			flush(stdout)
-# 			@load HPath H
-# 		else
-# 			println("build H...")
-# 			flush(stdout)
-# 			@time H=buildH(diag_,flag_)
-# 			@save HPath H
-# 		end
-# 		println()
-# 		flush(stdout)
-# 	else
-# 		H=LinearMap((C,B)->Hfunc!(C,B,diag_,flag_),len,ismutating=true,issymmetric=true,isposdef=false)
-# 	end
+	return 1 + state1 + (s1 << (2*L1)) + (state2 << (2*(L1+1))) + (s2 << (2*(L1+L2+1))) + (start << (2*(L1+L2+2))) + (below << (2*(L1+L2+3)))
+end
 
-# 	println("compute eigen...")
-# 	println()
-# 	flush(stdout)
+# basis of inds (not states)
+function getExtendedBasis(
+	basisLego::Dict{Tuple{Int8,Bool,Bool,Int8},Vector{Int64}},
+	L::Int64,
+	start::Int64,
+	below::Int64
+	)::Vector{Int64}
 
-# 	if eigSolver == "Arpack"
-# 		println("using Arpack:")
-# 		flush(stdout)
-# 		@time e,v = Arpack.eigs(H,nev=nev,which=:SR)
-# 		println(sort(real(e)))
-# 	elseif eigSolver == "ArnoldiMethod"
-# 		println("using ArnoldiMethod:")
-# 		flush(stdout)
-# 		@time e,v = eigs_ArnoldiMethod(H)
-# 		println(sort(e))
-# 	elseif eigSolver == "KrylovKit"
-# 		println("using KrylovKit:")
-# 		flush(stdout)
-# 		@time e,v = eigs_KrylovKit(H)
-# 		println(sort(e))
-# 	else
-# 		println("invalid eigensolver...bye")
-# 		flush(stdout)
-# 		exit()
-# 	end
-# 	@time @save eigPath e v
-# end
-# if length(e) > nev
-# 	e = e[1:nev]
-# 	v = v[:,1:nev]
-# end
-# println()
-# flush(stdout)
+	L1 = below-1
+	L2 = L-L1
+	res = []
 
+	### L1 L2 both not all X ###
+	for q1 = 0 : 2
+		for q2 = 0 : 2
+			# below is s1 = s2 = X
+			tot = - (q2 - (q1 + start))
+			if mod(tot, 3) == start
+				for evenxs_left = false : true
+					for evenxs_right = false : true
+						for state1 in getBasisLego(basisLego, L1, evenxs_left, evenxs_right, q1)
+							for state2 in getBasisLego(basisLego, L2, !evenxs_right, !evenxs_left, q2)
+								append!(res, extendedInd( state1, state2, L1, L2, start, below, 0, 0 ))
+							end
+						end
+					end
+				end
+			end
+			# below is s1 = X, s2 ≂̸ X
+			for s2 = 1 : 3
+				tot = (s2 - 1) + q2 - (q1 + start)
+				if mod(tot, 3) == start
+					evenxs_left = true
+					for evenxs_right = false : true
+						for state1 in getBasisLego(basisLego, L1, evenxs_left, evenxs_right, q1)
+							for state2 in getBasisLego(basisLego, L2, !evenxs_right, evenxs_left, q2)
+								append!(res, extendedInd( state1, state2, L1, L2, start, below, 0, s2 ))
+							end
+						end
+					end
+				end
+			end
+			# below is s1 ≂̸ X, s2 = X
+			for s1 = 1 : 3
+				tot = - (q2 + (s1 - 1) + (q1 + start))
+				if mod(tot, 3) == start
+					evenxs_right = true
+					for evenxs_left = false : true
+						for state1 in getBasisLego(basisLego, L1, evenxs_left, evenxs_right, q1)
+							for state2 in getBasisLego(basisLego, L2, evenxs_right, !evenxs_left, q2)
+								append!(res, extendedInd( state1, state2, L1, L2, start, below, s1, 0 ))
+							end
+						end
+					end
+				end
+			end
+			# below is s1 ≂̸ X, s2 ≂̸ X
+			for s1 = 1 : 3
+				for s2 = 1 : 3
+					tot = (s2 - 1) + (q2 + (s1 - 1) + (q1 + start))
+					if mod(tot, 3) == start
+						evenxs_left = true
+						evenxs_right = true
+						for state1 in getBasisLego(basisLego, L1, evenxs_left, evenxs_right, q1)
+							for state2 in getBasisLego(basisLego, L2, evenxs_right, evenxs_left, q2)
+								append!(res, extendedInd( state1, state2, L1, L2, start, below, s1, s2 ))
+							end
+						end
+					end
+				end
+			end
+		end
+	end
 
-# #=
-# Divide and conquer for extended chain.
-# =#
+	### L1 is all X, L2 is not ###
+	q1 = 0
+	for q2 = 0 : 2
+		# below is s1 = s2 = X
+		tot = - (q2 - (q1 + start))
+		if mod(tot, 3) == start
+			if iseven(L1)
+				for state2 in getBasisLego(basisLego, L2, true, true, q2)
+					append!(res, extendedInd( 0, state2, L1, L2, start, below, 0, 0 ))
+				end
+				for state2 in getBasisLego(basisLego, L2, false, false, q2)
+					append!(res, extendedInd( 0, state2, L1, L2, start, below, 0, 0 ))
+				end
+			else
+				for state2 in getBasisLego(basisLego, L2, true, false, q2)
+					append!(res, extendedInd( 0, state2, L1, L2, start, below, 0, 0 ))
+				end
+				for state2 in getBasisLego(basisLego, L2, false, true, q2)
+					append!(res, extendedInd( 0, state2, L1, L2, start, below, 0, 0 ))
+				end
+			end
+		end
+		# below is s1 = X, s2 ≂̸ X
+		for s2 = 1 : 3
+			tot = (s2 - 1) + q2 - (q1 + start)
+			if mod(tot, 3) == start
+				if iseven(L1)
+					for state2 in getBasisLego(basisLego, L2, false, true, q2)
+						append!(res, extendedInd( 0, state2, L1, L2, start, below, 0, s2 ))
+					end
+				else
+					for state2 in getBasisLego(basisLego, L2, true, true, q2)
+						append!(res, extendedInd( 0, state2, L1, L2, start, below, 0, s2 ))
+					end
+				end
+			end
+		end
+		# below is s1 ≂̸ X, s2 = X
+		for s1 = 1 : 3
+			tot = - (q2 + (s1 - 1) + (q1 + start))
+			if mod(tot, 3) == start
+				if iseven(L1)
+					for state2 in getBasisLego(basisLego, L2, true, false, q2)
+						append!(res, extendedInd( 0, state2, L1, L2, start, below, s1, 0 ))
+					end
+				else
+					for state2 in getBasisLego(basisLego, L2, true, true, q2)
+						append!(res, extendedInd( 0, state2, L1, L2, start, below, s1, 0 ))
+					end
+				end
+			end
+		end
+		# below is s1 ≂̸ X, s2 ≂̸ X
+		for s1 = 1 : 3
+			for s2 = 1 : 3
+				tot = (s2 - 1) + (q2 + (s1 - 1) + (q1 + start))
+				if mod(tot, 3) == start && iseven(L1)
+					for state2 in getBasisLego(basisLego, L2, true, true, q2)
+						append!(res, extendedInd( 0, state2, L1, L2, start, below, s1, s2 ))
+					end
+				end
+			end
+		end
+	end
 
-# function extendedInd(
-# 	state1::Int64,
-# 	state2::Int64,
-# 	L1::Int64,
-# 	L2::Int64,
-# 	start::Int64,
-# 	below::Int64,
-# 	s1::Int64,
-# 	s2::Int64)
+	### L2 is all X, L1 is not ###
+	q2 = 0
+	for q1 = 0 : 2
+		# below is s1 = s2 = X
+		tot = - (q2 - (q1 + start))
+		if mod(tot, 3) == start
+			if iseven(L2)
+				for state1 in getBasisLego(basisLego, L1, true, true, q1)
+					append!(res, extendedInd( state1, 0, L1, L2, start, below, 0, 0 ))
+				end
+				for state1 in getBasisLego(basisLego, L1, false, false, q1)
+					append!(res, extendedInd( state1, 0, L1, L2, start, below, 0, 0 ))
+				end
+			else
+				for state1 in getBasisLego(basisLego, L1, true, false, q1)
+					append!(res, extendedInd( state1, 0, L1, L2, start, below, 0, 0 ))
+				end
+				for state1 in getBasisLego(basisLego, L1, false, true, q1)
+					append!(res, extendedInd( state1, 0, L1, L2, start, below, 0, 0 ))
+				end
+			end
+		end
+		# below is s1 = X, s2 ≂̸ X
+		for s2 = 1 : 3
+			tot = (s2 - 1) + q2 - (q1 + start)
+			if mod(tot, 3) == start
+				if iseven(L2)
+					for state1 in getBasisLego(basisLego, L1, true, false, q1)
+						append!(res, extendedInd( state1, 0, L1, L2, start, below, 0, s2 ))
+					end
+				else
+					for state1 in getBasisLego(basisLego, L1, true, true, q1)
+						append!(res, extendedInd( state1, 0, L1, L2, start, below, 0, s2 ))
+					end
+				end
+			end
+		end
+		# below is s1 ≂̸ X, s2 = X
+		for s1 = 1 : 3
+			tot = - (q2 + (s1 - 1) + (q1 + start))
+			if mod(tot, 3) == start
+				if iseven(L2)
+					for state1 in getBasisLego(basisLego, L1, false, true, q1)
+						append!(res, extendedInd( state1, 0, L1, L2, start, below, s1, 0 ))
+					end
+				else
+					for state1 in getBasisLego(basisLego, L1, true, true, q1)
+						append!(res, extendedInd( state1, 0, L1, L2, start, below, s1, 0 ))
+					end
+				end
+			end
+		end
+		# below is s1 ≂̸ X, s2 ≂̸ X
+		for s1 = 1 : 3
+			for s2 = 1 : 3
+				tot = (s2 - 1) + (q2 + (s1 - 1) + (q1 + start))
+				if mod(tot, 3) == start && iseven(L2)
+					for state1 in getBasisLego(basisLego, L1, true, true, q1)
+						append!(res, extendedInd( state1, 0, L1, L2, start, below, s1, s2 ))
+					end
+				end
+			end
+		end
+	end
 
-# 	return 1 + state1 + (s1 << (2*L1)) + (state2 << (2*(L1+1))) + (s2 << (2*(L1+L2+1))) + (start << (2*(L1+L2+2))) + (below << (2*(L1+L2+3)))
-# end
+	### both L1 and L2 are all X ###
+	if iseven(L1) && iseven(L2)
+		append!(res, extendedInd( 0, 0, L1, L2, start, below, 0, 0 ))
+		for s1 = 1 : 3
+			s2 = 1 + mod(1-s1,3)
+			append!(res, extendedInd( 0, 0, L1, L2, start, below, s1, s2 ))
+		end
+	end
+	if isodd(L1) && isodd(L2)
+		append!(res, extendedInd( 0, 0, L1, L2, start, below, 0, 0 ))
+	end
+	if (iseven(L1) && isodd(L2) || iseven(L2) && isodd(L1))
+		for s2 = 1 : 3
+			tot = (s2 - 1) - start
+			if mod(tot,3) == start
+				append!(res, extendedInd( 0, 0, L1, L2, start, below, 0, s2 ))
+			end
+		end
+		for s1 = 1 : 3
+			tot = - ( (s1 - 1) + start )
+			if mod(tot,3) == start
+				append!(res, extendedInd( 0, 0, L1, L2, start, below, s1, 0 ))
+			end
+		end
+	end
 
-# # basis of inds (not states)
-# function getExtendedBasis(
-# 	basisLego::Dict{Tuple{Int8,Bool,Bool,Int8},Vector{Int64}},
-# 	L::Int64,
-# 	start::Int64,
-# 	below::Int64
-# 	)::Vector{Int64}
+	sort!(res)
+	return res
+end
 
-# 	L1 = below-1
-# 	L2 = L-L1
-# 	res = []
+# basis of inds (not states)
+function getExtendedBasis(
+	basisLego::Dict{Tuple{Int8,Bool,Bool,Int8},Vector{Int64}},
+	L::Int64,
+	below::Int64
+	)::Vector{Int64}
 
-# 	### L1 L2 both not all X ###
-# 	for q1 = 0 : 2
-# 		for q2 = 0 : 2
-# 			# below is s1 = s2 = X
-# 			tot = - (q2 - (q1 + start))
-# 			if mod(tot, 3) == start
-# 				for evenxs_left = false : true
-# 					for evenxs_right = false : true
-# 						for state1 in getBasisLego(basisLego, L1, evenxs_left, evenxs_right, q1)
-# 							for state2 in getBasisLego(basisLego, L2, !evenxs_right, !evenxs_left, q2)
-# 								append!(res, extendedInd( state1, state2, L1, L2, start, below, 0, 0 ))
-# 							end
-# 						end
-# 					end
-# 				end
-# 			end
-# 			# below is s1 = X, s2 ≂̸ X
-# 			for s2 = 1 : 3
-# 				tot = (s2 - 1) + q2 - (q1 + start)
-# 				if mod(tot, 3) == start
-# 					evenxs_left = true
-# 					for evenxs_right = false : true
-# 						for state1 in getBasisLego(basisLego, L1, evenxs_left, evenxs_right, q1)
-# 							for state2 in getBasisLego(basisLego, L2, !evenxs_right, evenxs_left, q2)
-# 								append!(res, extendedInd( state1, state2, L1, L2, start, below, 0, s2 ))
-# 							end
-# 						end
-# 					end
-# 				end
-# 			end
-# 			# below is s1 ≂̸ X, s2 = X
-# 			for s1 = 1 : 3
-# 				tot = - (q2 + (s1 - 1) + (q1 + start))
-# 				if mod(tot, 3) == start
-# 					evenxs_right = true
-# 					for evenxs_left = false : true
-# 						for state1 in getBasisLego(basisLego, L1, evenxs_left, evenxs_right, q1)
-# 							for state2 in getBasisLego(basisLego, L2, evenxs_right, !evenxs_left, q2)
-# 								append!(res, extendedInd( state1, state2, L1, L2, start, below, s1, 0 ))
-# 							end
-# 						end
-# 					end
-# 				end
-# 			end
-# 			# below is s1 ≂̸ X, s2 ≂̸ X
-# 			for s1 = 1 : 3
-# 				for s2 = 1 : 3
-# 					tot = (s2 - 1) + (q2 + (s1 - 1) + (q1 + start))
-# 					if mod(tot, 3) == start
-# 						evenxs_left = true
-# 						evenxs_right = true
-# 						for state1 in getBasisLego(basisLego, L1, evenxs_left, evenxs_right, q1)
-# 							for state2 in getBasisLego(basisLego, L2, evenxs_right, evenxs_left, q2)
-# 								append!(res, extendedInd( state1, state2, L1, L2, start, below, s1, s2 ))
-# 							end
-# 						end
-# 					end
-# 				end
-# 			end
-# 		end
-# 	end
-
-# 	### L1 is all X, L2 is not ###
-# 	q1 = 0
-# 	for q2 = 0 : 2
-# 		# below is s1 = s2 = X
-# 		tot = - (q2 - (q1 + start))
-# 		if mod(tot, 3) == start
-# 			if iseven(L1)
-# 				for state2 in getBasisLego(basisLego, L2, true, true, q2)
-# 					append!(res, extendedInd( 0, state2, L1, L2, start, below, 0, 0 ))
-# 				end
-# 				for state2 in getBasisLego(basisLego, L2, false, false, q2)
-# 					append!(res, extendedInd( 0, state2, L1, L2, start, below, 0, 0 ))
-# 				end
-# 			else
-# 				for state2 in getBasisLego(basisLego, L2, true, false, q2)
-# 					append!(res, extendedInd( 0, state2, L1, L2, start, below, 0, 0 ))
-# 				end
-# 				for state2 in getBasisLego(basisLego, L2, false, true, q2)
-# 					append!(res, extendedInd( 0, state2, L1, L2, start, below, 0, 0 ))
-# 				end
-# 			end
-# 		end
-# 		# below is s1 = X, s2 ≂̸ X
-# 		for s2 = 1 : 3
-# 			tot = (s2 - 1) + q2 - (q1 + start)
-# 			if mod(tot, 3) == start
-# 				if iseven(L1)
-# 					for state2 in getBasisLego(basisLego, L2, false, true, q2)
-# 						append!(res, extendedInd( 0, state2, L1, L2, start, below, 0, s2 ))
-# 					end
-# 				else
-# 					for state2 in getBasisLego(basisLego, L2, true, true, q2)
-# 						append!(res, extendedInd( 0, state2, L1, L2, start, below, 0, s2 ))
-# 					end
-# 				end
-# 			end
-# 		end
-# 		# below is s1 ≂̸ X, s2 = X
-# 		for s1 = 1 : 3
-# 			tot = - (q2 + (s1 - 1) + (q1 + start))
-# 			if mod(tot, 3) == start
-# 				if iseven(L1)
-# 					for state2 in getBasisLego(basisLego, L2, true, false, q2)
-# 						append!(res, extendedInd( 0, state2, L1, L2, start, below, s1, 0 ))
-# 					end
-# 				else
-# 					for state2 in getBasisLego(basisLego, L2, true, true, q2)
-# 						append!(res, extendedInd( 0, state2, L1, L2, start, below, s1, 0 ))
-# 					end
-# 				end
-# 			end
-# 		end
-# 		# below is s1 ≂̸ X, s2 ≂̸ X
-# 		for s1 = 1 : 3
-# 			for s2 = 1 : 3
-# 				tot = (s2 - 1) + (q2 + (s1 - 1) + (q1 + start))
-# 				if mod(tot, 3) == start && iseven(L1)
-# 					for state2 in getBasisLego(basisLego, L2, true, true, q2)
-# 						append!(res, extendedInd( 0, state2, L1, L2, start, below, s1, s2 ))
-# 					end
-# 				end
-# 			end
-# 		end
-# 	end
-
-# 	### L2 is all X, L1 is not ###
-# 	q2 = 0
-# 	for q1 = 0 : 2
-# 		# below is s1 = s2 = X
-# 		tot = - (q2 - (q1 + start))
-# 		if mod(tot, 3) == start
-# 			if iseven(L2)
-# 				for state1 in getBasisLego(basisLego, L1, true, true, q1)
-# 					append!(res, extendedInd( state1, 0, L1, L2, start, below, 0, 0 ))
-# 				end
-# 				for state1 in getBasisLego(basisLego, L1, false, false, q1)
-# 					append!(res, extendedInd( state1, 0, L1, L2, start, below, 0, 0 ))
-# 				end
-# 			else
-# 				for state1 in getBasisLego(basisLego, L1, true, false, q1)
-# 					append!(res, extendedInd( state1, 0, L1, L2, start, below, 0, 0 ))
-# 				end
-# 				for state1 in getBasisLego(basisLego, L1, false, true, q1)
-# 					append!(res, extendedInd( state1, 0, L1, L2, start, below, 0, 0 ))
-# 				end
-# 			end
-# 		end
-# 		# below is s1 = X, s2 ≂̸ X
-# 		for s2 = 1 : 3
-# 			tot = (s2 - 1) + q2 - (q1 + start)
-# 			if mod(tot, 3) == start
-# 				if iseven(L2)
-# 					for state1 in getBasisLego(basisLego, L1, true, false, q1)
-# 						append!(res, extendedInd( state1, 0, L1, L2, start, below, 0, s2 ))
-# 					end
-# 				else
-# 					for state1 in getBasisLego(basisLego, L1, true, true, q1)
-# 						append!(res, extendedInd( state1, 0, L1, L2, start, below, 0, s2 ))
-# 					end
-# 				end
-# 			end
-# 		end
-# 		# below is s1 ≂̸ X, s2 = X
-# 		for s1 = 1 : 3
-# 			tot = - (q2 + (s1 - 1) + (q1 + start))
-# 			if mod(tot, 3) == start
-# 				if iseven(L2)
-# 					for state1 in getBasisLego(basisLego, L1, false, true, q1)
-# 						append!(res, extendedInd( state1, 0, L1, L2, start, below, s1, 0 ))
-# 					end
-# 				else
-# 					for state1 in getBasisLego(basisLego, L1, true, true, q1)
-# 						append!(res, extendedInd( state1, 0, L1, L2, start, below, s1, 0 ))
-# 					end
-# 				end
-# 			end
-# 		end
-# 		# below is s1 ≂̸ X, s2 ≂̸ X
-# 		for s1 = 1 : 3
-# 			for s2 = 1 : 3
-# 				tot = (s2 - 1) + (q2 + (s1 - 1) + (q1 + start))
-# 				if mod(tot, 3) == start && iseven(L2)
-# 					for state1 in getBasisLego(basisLego, L1, true, true, q1)
-# 						append!(res, extendedInd( state1, 0, L1, L2, start, below, s1, s2 ))
-# 					end
-# 				end
-# 			end
-# 		end
-# 	end
-
-# 	### both L1 and L2 are all X ###
-# 	if iseven(L1) && iseven(L2)
-# 		append!(res, extendedInd( 0, 0, L1, L2, start, below, 0, 0 ))
-# 		for s1 = 1 : 3
-# 			s2 = 1 + mod(1-s1,3)
-# 			append!(res, extendedInd( 0, 0, L1, L2, start, below, s1, s2 ))
-# 		end
-# 	end
-# 	if isodd(L1) && isodd(L2)
-# 		append!(res, extendedInd( 0, 0, L1, L2, start, below, 0, 0 ))
-# 	end
-# 	if (iseven(L1) && isodd(L2) || iseven(L2) && isodd(L1))
-# 		for s2 = 1 : 3
-# 			tot = (s2 - 1) - start
-# 			if mod(tot,3) == start
-# 				append!(res, extendedInd( 0, 0, L1, L2, start, below, 0, s2 ))
-# 			end
-# 		end
-# 		for s1 = 1 : 3
-# 			tot = - ( (s1 - 1) + start )
-# 			if mod(tot,3) == start
-# 				append!(res, extendedInd( 0, 0, L1, L2, start, below, s1, 0 ))
-# 			end
-# 		end
-# 	end
-
-# 	sort!(res)
-# 	return res
-# end
-
-# # basis of inds (not states)
-# function getExtendedBasis(
-# 	basisLego::Dict{Tuple{Int8,Bool,Bool,Int8},Vector{Int64}},
-# 	L::Int64,
-# 	below::Int64
-# 	)::Vector{Int64}
-
-# 	res = []
-# 	for start = 0 : 2
-# 		append!(res, getExtendedBasis(basisLego, L, start, below))
-# 		if iseven(L)
-# 			append!(res, 1 + 1 + (start << (2*(L+2))) + (below << (2*(L+3))))
-# 		end
-# 	end
-# 	return res
-# end
+	res = []
+	for start = 0 : 2
+		append!(res, getExtendedBasis(basisLego, L, start, below))
+		if iseven(L)
+			append!(res, 1 + 1 + (start << (2*(L+2))) + (below << (2*(L+3))))
+		end
+	end
+	return res
+end
 
 
-# #=
-# F-symbol stuff.
-# =#
+#=
+F-symbol stuff.
+=#
 
-# const fSymbolMapping_ = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3027756377319946, 0.0, 0.0, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, -0.5351837584879964, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, -0.5351837584879964, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, -0.5351837584879964, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.3027756377319946, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.7675918792439983, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, -0.5351837584879964, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, -0.5351837584879964, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, -0.5351837584879964, 0.3027756377319946, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, -0.5351837584879964, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, -0.5351837584879964, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.5351837584879964, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878]
+const fSymbolMapping_ = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3027756377319946, 0.0, 0.0, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, -0.5351837584879964, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, -0.5351837584879964, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, -0.5351837584879964, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.3027756377319946, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.7675918792439983, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, -0.5351837584879964, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, -0.5351837584879964, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, -0.5351837584879964, 0.3027756377319946, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, -0.5351837584879964, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, -0.5351837584879964, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5502505227003375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.5351837584879964, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5542656654188897, 0.0, 0.0, 0.7675918792439983, 0.0, 0.0, 0.0, 0.0, 0.0, -0.3218575446628878]
 
-# function FSymbolZipper(e1::Int64,s1::Int64,s2::Int64,s3::Int64,s4::Int64)
-# 	i = s4 + (s3<<2) + (s2<<4) + (s1<<6) + ((e1-1)<<8)
-# 	return fSymbolMapping_[i+1]
-# end
-
-
-# #=
-# Construct zipper.
-# =#
-
-# function attachInd(ind::Int64,sp::Tuple{Int64,Int64},start::Int64,L::Int64=L+2)
-# 	if ind==2 && iseven(L)
-# 		state = 0
-# 	else
-# 		state = (ind-1)
-# 	end
-# 	state = state << 2
-# 	(a,b)=sp
-# 	i = L
-# 	state &= ~(3<<(2*(i-1)))
-# 	state |= (a<<(2*(i-1)))
-# 	j = 1
-# 	state &= ~(3<<(2*(j-1)))
-# 	state |= (b<<(2*(j-1)))
-# 	if (state==0) && iseven(L) && (ind==1)
-# 		state = 1
-# 	end
-# 	return 1+(state+(start<<(2*L))+(1<<(2*(L+1))))
-# end
-
-# attachPreind(ind::Int64,sp::Tuple{Int64,Int64},start::Int64,L::Int64=L+2) = zipFromInd[attachInd(ind,sp,start,L)]
-
-# function attach!(C,B)
-# 	Threads.@threads for preind = 1 : ziplen
-# 		C[preind] = 0
-# 	end
-# 	for preind = 1 : len
-# 		ind = basis[preind]
-# 		if B[preind] == 0
-# 			continue
-# 		end
-# 		state = stateFromInd(ind)
-# 		if (isodd(trailingXs(state)) || (iseven(L) && ind==2))
-# 			ni = attachPreind(ind,sXX,0,L+2)
-# 			C[ni] += B[preind]
-# 		else
-# 			ni = attachPreind(ind,sXX,0,L+2)
-# 			C[ni] += 1/ζ * B[preind]
-# 			ni = attachPreind(ind,s00,0,L+2)
-# 			C[ni] += ξ * B[preind]
-# 			ni = attachPreind(ind,sPM,1,L+2)
-# 			C[ni] += ξ * B[preind]
-# 			ni = attachPreind(ind,sMP,2,L+2)
-# 			C[ni] += ξ * B[preind]
-# 		end
-# 	end
-# end
-
-# function buildAttach()
-# 	col=MyInt[]
-# 	row=MyInt[]
-# 	val=Float16[]
-# 	for preind = 1 : len
-# 		ind = basis[preind]
-# 		state = stateFromInd(ind)
-# 		if (isodd(trailingXs(state)) || (iseven(L) && ind==2))
-# 			ni = attachPreind(ind,sXX,0,L+2)
-# 			append!(col,[preind])
-# 			append!(row,[ni])
-# 			append!(val,[1])
-# 		else
-# 			ni = attachPreind(ind,sXX,0,L+2)
-# 			append!(col,[preind])
-# 			append!(row,[ni])
-# 			append!(val,[1/ζ])
-# 			ni = attachPreind(ind,s00,0,L+2)
-# 			append!(col,[preind])
-# 			append!(row,[ni])
-# 			append!(val,[ξ])
-# 			ni = attachPreind(ind,sPM,1,L+2)
-# 			append!(col,[preind])
-# 			append!(row,[ni])
-# 			append!(val,[ξ])
-# 			ni = attachPreind(ind,sMP,2,L+2)
-# 			append!(col,[preind])
-# 			append!(row,[ni])
-# 			append!(val,[ξ])
-# 		end
-# 	end
-# 	append!(col,[len])
-# 	append!(row,[ziplen])
-# 	append!(val,[0])
-# 	return sparse(row,col,val)
-# end
-
-# function zipInd(ind::Int64,sp::Tuple{Int64,Int64},L::Int64=L+2)
-# 	below = ((ind-1)>>(2*(L+1)))
-# 	if below == 0
-# 		error("no ρ from below")
-# 	end
-# 	start = ((ind-1)>>(2*L)) & 3
-# 	i = below
-# 	below += 1
-# 	state = (ind-1) & (4^L-1)
-# 	if state==1 && iseven(L)
-# 		state = 0
-# 	end
-# 	(a,b)=sp
-# 	state &= ~(3<<(2*(i-1)))
-# 	state |= (a<<(2*(i-1)))
-# 	j=i+1
-# 	state &= ~(3<<(2*(j-1)))
-# 	state |= (b<<(2*(j-1)))
-# 	if (state==0) && (isodd(trailingXs((ind-1)&(4^L-1),L)) || (iseven(L) && ((ind-1)&(4^L-1))==1))
-# 		state = 1
-# 	end
-# 	return 1+(state+(start<<(2*L))+(below<<(2*(L+1))))
-# end
-
-# zipPreInd(i::Int64,ind::Int64,sp::Tuple{Int64,Int64},L::Int64=L+2) = zipFromInd[zipInd(ind,sp,L)]
-
-# function zip!(C,B,i::Int64)
-# 	Threads.@threads for preind = 1 : ziplen
-# 		C[preind] = 0
-# 	end
-# 	for preind = 1 : ziplen
-# 		ind = inBasis[preind]
-# 		if B[preind] == 0
-# 			continue
-# 		end
-# 		e1 = Int64(edgeAtDrapeMapping[preind])
-# 		state = stateFromInd(ind,L+2)
-# 		s1,s2 = localStatePair(state,i,L+2)
-# 		for s3 = 0 : 3
-# 			for s4 = 0 : 3
-# 				if FSymbolZipper(e1,s1,s2,s3,s4)==0
-# 					continue
-# 				end
-# 				ni = zipPreInd(i+1,ind,(s3,s4),L+2)
-# 				C[ni] += FSymbolZipper(e1,s1,s2,s3,s4) * B[preind]
-# 			end
-# 		end
-# 	end
-# end
-
-# function buildZip(i::Int64)
-# 	res = sparse(MyInt[],MyInt[],Float16[],ziplen,ziplen)
-# 	col=MyInt[]
-# 	row=MyInt[]
-# 	val=Float16[]
-# 	ncol = 1
-# 	for preind = 1 : ziplen
-# 		miniRow = Int64[]
-# 		miniVal = Float16[]
-# 		ind = inBasis[preind]
-# 		e1 = Int64(edgeAtDrapeMapping[preind])
-# 		state = stateFromInd(ind,L+2)
-# 		s1,s2 = localStatePair(state,i,L+2)
-# 		for s3 = 0 : 3
-# 			for s4 = 0 : 3
-# 				if FSymbolZipper(e1,s1,s2,s3,s4)==0
-# 					continue
-# 				end
-# 				ni = zipPreInd(i+1,ind,(s3,s4),L+2)
-# 				append!(miniRow,[ni])
-# 				append!(miniVal,[FSymbolZipper(e1,s1,s2,s3,s4)])
-# 			end
-# 		end
-# 		sortAndAppendColumn!(col, row, val, miniRow, miniVal)
-# 		if (preind % (ziplen / 10)) == 1 || preind == ziplen
-# 			num = res.colptr[ncol]
-# 			for c in col
-# 				ncol += 1
-# 				num += c
-# 				res.colptr[ncol] = num
-# 			end
-# 			append!(res.rowval, row)
-# 			append!(res.nzval, val)
-# 			col=MyInt[]
-# 			row=MyInt[]
-# 			val=Float16[]
-# 		end
-# 		append!(res.rowval, row)
-# 		append!(res.nzval, val)
-# 		row=MyInt[]
-# 		val=Float16[]
-# 	end
-# 	return res
-# end
-
-# function detach!(C,B)
-# 	Threads.@threads for preind = 1 : len
-# 		C[preind] = 0
-# 	end
-# 	for preind = 1 : ziplen
-# 		ind = inBasis[preind]
-# 		if B[preind] == 0
-# 			continue
-# 		end
-# 		state = stateFromInd(ind,L+2)
-# 		ni = 1+(state&(4^L-1))
-# 		if ni==1 && ((ind-1)&(4^(L+2)-1))==1 && iseven(L)
-# 			ni=2
-# 		end
-# 		if !haskey(fromInd, ni)
-# 			continue
-# 		end
-# 		ni = fromInd[ni]
-# 		sp = localStatePair(state,L+1,L+2)
-# 		if (isodd(trailingXs(state,L+2)) || iseven(L) && ni==2)
-# 			if sp==sXX
-# 				C[ni] += ζ * B[preind]
-# 			end
-# 		else
-# 			if sp==sXX
-# 				C[ni] += B[preind]
-# 			elseif sp==s00 || sp==sPM || sp==sMP
-# 				C[ni] += √ζ * B[preind]
-# 			end
-# 		end
-# 	end
-# end
-
-# function buildDetach()
-# 	col=MyInt[]
-# 	row=MyInt[]
-# 	val=Float16[]
-# 	for preind = 1 : ziplen
-# 		ind = inBasis[preind]
-# 		state = stateFromInd(ind,L+2)
-# 		ni = 1+(state&(4^L-1))
-# 		if ni==1 && ((ind-1)&(4^(L+2)-1))==1 && iseven(L)
-# 			ni=2
-# 		end
-# 		if !haskey(fromInd, ni)
-# 			continue
-# 		end
-# 		ni = fromInd[ni]
-# 		sp = localStatePair(state,L+1,L+2)
-# 		if (isodd(trailingXs(state,L+2)) || iseven(L) && ni==2)
-# 			if sp==sXX
-# 				append!(col,[preind])
-# 				append!(row,[ni])
-# 				append!(val,[ζ])
-# 			end
-# 		else
-# 			if sp==sXX
-# 				append!(col,[preind])
-# 				append!(row,[ni])
-# 				append!(val,[1])
-# 			elseif sp==s00 || sp==sPM || sp==sMP
-# 				append!(col,[preind])
-# 				append!(row,[ni])
-# 				append!(val,[√ζ])
-# 			end
-# 		end
-# 	end
-# 	append!(col,[ziplen])
-# 	append!(row,[len])
-# 	append!(val,[0])
-# 	return sparse(row,col,val)
-# end
-
-# #=
-# The zipper needs to know the edge label (1,a,b,ρ,aρ,a^2ρ) = (1,2,3,4,5,6)
-# right before the vertex from which ρ is draped below.
-# =#
-# function setEdgeAtDrapeMapping!(edgeAtDrapeMapping,below::Int64,preind::Int64)
-# 	state = inBasis[preind]-1
-# 	start = (state>>(2*(L+2))) & 3
-# 	state = state&(4^(L+2)-1)
-# 	evenxs=iseven(trailingXs(state,L+2))
-# 	if(state==1 && iseven(L))
-# 		state=0
-# 		evenxs=false
-# 	end
-# 	tot=start
-# 	for pos = 0 : below-2
-# 		a=(state >> (2*pos)) & 3
-# 		if a==0
-# 			evenxs = ! evenxs
-# 		elseif a==2
-# 			tot+=1
-# 		elseif a==3
-# 			tot+=2
-# 		end
-# 	end
-# 	tot%=3
-# 	if evenxs
-# 		edgeAtDrapeMapping[preind] = 4+tot
-# 	else
-# 		edgeAtDrapeMapping[preind] = 1+tot
-# 	end
-# end
+function FSymbolZipper(e1::Int64,s1::Int64,s2::Int64,s3::Int64,s4::Int64)
+	i = s4 + (s3<<2) + (s2<<4) + (s1<<6) + ((e1-1)<<8)
+	return fSymbolMapping_[i+1]
+end
 
 
-# #=
-# Act zipper.
-# =#
+#=
+Construct zipper.
+=#
 
-# # Compute extended basis etc to prepare for one step of zipper.
-# function prepare!(below::Int64)
-# 	preparePath = dataPathL * "prep/prep_" * string(below) * ".jld2"
-# 	if ispath(preparePath)
-# 		if below == 0
-# 			println("load prepare attach...")
-# 		elseif below == L+1
-# 			println("load prepare detach...")
-# 		else
-# 			println("load prepare zip " * string(below) * "...")
-# 		end
-# 		@load preparePath inBasis outBasis zipFromInd edgeAtDrapeMapping
-# 	else
-# 		if below == 0
-# 			println("prepare attach...")
-# 		elseif below == L+1
-# 			println("prepare detach...")
-# 		else
-# 			println("prepare zip " * string(below) * "...")
-# 		end
-# 		if below == 0
-# 			global inBasis = basis
-# 		else
-# 			global inBasis = outBasis
-# 		end
-# 		if below == L+1
-# 			global outBasis = basis
-# 			global zipFromInd = fromInd
-# 		else
-# 			if below > 0
-# 				global outBasis = getExtendedBasis(basisLego_, L, below+1)
-# 			end
-# 			global zipFromInd = Dict((outBasis[x],MyInt(x)) for x in 1 : ziplen)
-# 		end
+function attachInd(ind::Int64,sp::Tuple{Int64,Int64},start::Int64,L::Int64=L+2)
+	if ind==2 && iseven(L)
+		state = 0
+	else
+		state = (ind-1)
+	end
+	state = state << 2
+	(a,b)=sp
+	i = L
+	state &= ~(3<<(2*(i-1)))
+	state |= (a<<(2*(i-1)))
+	j = 1
+	state &= ~(3<<(2*(j-1)))
+	state |= (b<<(2*(j-1)))
+	if (state==0) && iseven(L) && (ind==1)
+		state = 1
+	end
+	return 1+(state+(start<<(2*L))+(1<<(2*(L+1))))
+end
 
-# 		global edgeAtDrapeMapping
-# 		if 1 <= below <= L
-# 			for preind = 1 : ziplen
-# 				setEdgeAtDrapeMapping!(edgeAtDrapeMapping,below,preind)
-# 			end
-# 		end
+attachPreind(ind::Int64,sp::Tuple{Int64,Int64},start::Int64,L::Int64=L+2) = zipFromInd[attachInd(ind,sp,start,L)]
 
-# 		@save preparePath inBasis outBasis zipFromInd edgeAtDrapeMapping
-# 	end
-# end
+function attach!(C::Vector{MyComplex},B::Vector{MyComplex})
+	Threads.@threads for preind = 1 : ziplen
+		C[preind] = 0
+	end
+	batchsize = Int64(ceil(len / Threads.nthreads()))
+	Threads.@threads for t = 1 : Threads.nthreads()
+		for preind = 1 + (t-1)*batchsize : t*batchsize
+			if preind > len
+				continue
+			end
+			ind = basis[preind]
+			if B[preind] == 0
+				continue
+			end
+			state = stateFromInd(ind)
+			if (isodd(trailingXs(state)) || (iseven(L) && ind==2))
+				ni = attachPreind(ind,sXX,0,L+2)
+				C[ni] += B[preind]
+			else
+				ni = attachPreind(ind,sXX,0,L+2)
+				C[ni] += 1/ζ * B[preind]
+				ni = attachPreind(ind,s00,0,L+2)
+				C[ni] += ξ * B[preind]
+				ni = attachPreind(ind,sPM,1,L+2)
+				C[ni] += ξ * B[preind]
+				ni = attachPreind(ind,sMP,2,L+2)
+				C[ni] += ξ * B[preind]
+			end
+		end
+	end
+end
 
-# if !onlyT
-# 	const prepZipPath = dataPathL * "prepZip.jld2"
-# 	if ispath(prepZipPath)
-# 		println("load zipper...")
-# 		flush(stdout)
-# 		@time @load prepZipPath inBasis outBasis ziplen zipFromInd edgeAtDrapeMapping
-# 	else
-# 		println("prepare zipper...")
-# 		flush(stdout)
-# 		inBasis = basis
-# 		@time outBasis = getExtendedBasis(basisLego_, L, 1)
-# 		ziplen = length(outBasis)
-# 		zipFromInd = Dict{Int64,MyInt}((outBasis[x],MyInt(x)) for x in 1 : ziplen)
-# 		edgeAtDrapeMapping = zeros(Int8,ziplen)
-# 		@time @save prepZipPath inBasis outBasis ziplen zipFromInd edgeAtDrapeMapping
-# 	end
-# 	println()
-# 	flush(stdout)
-# end
+function buildAttach()
+	col=MyInt[]
+	row=MyInt[]
+	val=ZipFloat[]
+	for preind = 1 : len
+		ind = basis[preind]
+		state = stateFromInd(ind)
+		if (isodd(trailingXs(state)) || (iseven(L) && ind==2))
+			ni = attachPreind(ind,sXX,0,L+2)
+			append!(col,[preind])
+			append!(row,[ni])
+			append!(val,[1])
+		else
+			ni = attachPreind(ind,sXX,0,L+2)
+			append!(col,[preind])
+			append!(row,[ni])
+			append!(val,[1/ζ])
+			ni = attachPreind(ind,s00,0,L+2)
+			append!(col,[preind])
+			append!(row,[ni])
+			append!(val,[ξ])
+			ni = attachPreind(ind,sPM,1,L+2)
+			append!(col,[preind])
+			append!(row,[ni])
+			append!(val,[ξ])
+			ni = attachPreind(ind,sMP,2,L+2)
+			append!(col,[preind])
+			append!(row,[ni])
+			append!(val,[ξ])
+		end
+	end
+	append!(col,[len])
+	append!(row,[ziplen])
+	append!(val,[0])
+	return sparse(row,col,val)
+end
 
-# function ρMatrix(v)
-# 	if buildSparse
-# 		@time prepare!(0)
+function zipInd(ind::Int64,sp::Tuple{Int64,Int64},L::Int64=L+2)
+	below = ((ind-1)>>(2*(L+1)))
+	if below == 0
+		error("no ρ from below")
+	end
+	start = ((ind-1)>>(2*L)) & 3
+	i = below
+	below += 1
+	state = (ind-1) & (4^L-1)
+	if state==1 && iseven(L)
+		state = 0
+	end
+	(a,b)=sp
+	state &= ~(3<<(2*(i-1)))
+	state |= (a<<(2*(i-1)))
+	j=i+1
+	state &= ~(3<<(2*(j-1)))
+	state |= (b<<(2*(j-1)))
+	if (state==0) && (isodd(trailingXs((ind-1)&(4^L-1),L)) || (iseven(L) && ((ind-1)&(4^L-1))==1))
+		state = 1
+	end
+	return 1+(state+(start<<(2*L))+(below<<(2*(L+1))))
+end
 
-# 		donePath = dataPathL * "done/done_" * string(nev) * "_" * string(0) * ".jld2"
-# 		if !ispath(donePath)
-# 			attachPath = dataPathL * "attach.jld2"
-# 			if ispath(attachPath)
-# 				println("load attach...")
-# 				flush(stdout)
-# 				@time @load attachPath ρ
-# 			else
-# 				println("build attach...")
-# 				flush(stdout)
-# 				@time ρ = buildAttach()
-# 				@time @save attachPath ρ
-# 			end
+zipPreInd(i::Int64,ind::Int64,sp::Tuple{Int64,Int64},L::Int64=L+2) = zipFromInd[zipInd(ind,sp,L)]
 
-# 			println("act attach...")
-# 			flush(stdout)
-# 			@time for s = 1 : length(e)
-# 				println(s)
-# 				flush(stdout)
-# 				path = dataPathL * "rhov/rhov_0_" * string(s) * ".jld2"
-# 				if !ispath(path)
-# 					@time rhov = ρ * v[:,s]
-# 					@save path rhov
-# 					flush(stdout)
-# 				end
-# 			end
-# 		end
-# 		@save donePath donePath
-# 		println()
-# 		flush(stdout)
+function zip!(C::Vector{MyComplex},B::Vector{MyComplex},i::Int64)
+	Threads.@threads for preind = 1 : ziplen
+		C[preind] = 0
+	end
+	batchsize = Int64(ceil(ziplen / Threads.nthreads()))
+	Threads.@threads for t = 1 : Threads.nthreads()
+		for preind = 1 + (t-1)*batchsize : t*batchsize
+			if preind > ziplen
+				continue
+			end
+			ind = inBasis[preind]
+			if B[preind] == 0
+				continue
+			end
+			e1 = Int64(edgeAtDrapeMapping[preind])
+			state = stateFromInd(ind,L+2)
+			s1,s2 = localStatePair(state,i,L+2)
+			for s3 = 0 : 3
+				for s4 = 0 : 3
+					if FSymbolZipper(e1,s1,s2,s3,s4)==0
+						continue
+					end
+					ni = zipPreInd(i+1,ind,(s3,s4),L+2)
+					C[ni] += FSymbolZipper(e1,s1,s2,s3,s4) * B[preind]
+				end
+			end
+		end
+	end
+end
 
-# 		for i = 1 : L
-# 			@time prepare!(i)
-# 			donePath = dataPathL * "done/done_" * string(nev) * "_" * string(i) * ".jld2"
-# 			if !ispath(donePath)
-# 				zipPath = dataPathL * "zip/zip_" * string(i) * ".jld2"
-# 				if ispath(zipPath)
-# 					println("load zip ", i, "...")
-# 					flush(stdout)
-# 					@time @load zipPath ρ
-# 				else
-# 					println("build zip ", i, "...")
-# 					flush(stdout)
-# 					@time ρ = buildZip(i)
-# 					@time @save zipPath ρ
-# 				end
+function buildZip(i::Int64)
+	res = sparse(MyInt[],MyInt[],ZipFloat[],ziplen,ziplen)
+	col=MyInt[]
+	row=MyInt[]
+	val=ZipFloat[]
+	ncol = 1
+	for preind = 1 : ziplen
+		miniRow = Int64[]
+		miniVal = ZipFloat[]
+		ind = inBasis[preind]
+		e1 = Int64(edgeAtDrapeMapping[preind])
+		state = stateFromInd(ind,L+2)
+		s1,s2 = localStatePair(state,i,L+2)
+		for s3 = 0 : 3
+			for s4 = 0 : 3
+				if FSymbolZipper(e1,s1,s2,s3,s4)==0
+					continue
+				end
+				ni = zipPreInd(i+1,ind,(s3,s4),L+2)
+				append!(miniRow,[ni])
+				append!(miniVal,[FSymbolZipper(e1,s1,s2,s3,s4)])
+			end
+		end
+		sortAndAppendColumn!(col, row, val, miniRow, miniVal)
+		if (preind % (ziplen / 10)) == 1 || preind == ziplen
+			num = res.colptr[ncol]
+			for c in col
+				ncol += 1
+				num += c
+				res.colptr[ncol] = num
+			end
+			append!(res.rowval, row)
+			append!(res.nzval, val)
+			col=MyInt[]
+			row=MyInt[]
+			val=ZipFloat[]
+		end
+		append!(res.rowval, row)
+		append!(res.nzval, val)
+		row=MyInt[]
+		val=ZipFloat[]
+	end
+	return res
+end
 
-# 				println("act zip ", i, "...")
-# 				flush(stdout)
-# 				@time for s = 1 : length(e)
-# 					println(s)
-# 					flush(stdout)
-# 					oldPath = dataPathL * "rhov/rhov_" * string(i-1) * "_" * string(s) * ".jld2"
-# 					path = dataPathL * "rhov/rhov_" * string(i) * "_" * string(s) * ".jld2"
-# 					if !ispath(path)
-# 						@load oldPath rhov
-# 						@time rhov = ρ * rhov
-# 						@save path rhov
-# 						flush(stdout)
-# 					end
-# 				end
-# 			end
-# 			@save donePath donePath
-# 			println()
-# 			flush(stdout)
-# 		end
+function detach!(C::Vector{MyComplex},B::Vector{MyComplex})
+	Threads.@threads for preind = 1 : len
+		C[preind] = 0
+	end
+	batchsize = Int64(ceil(ziplen / Threads.nthreads()))
+	Threads.@threads for t = 1 : Threads.nthreads()
+		for preind = 1 + (t-1)*batchsize : t*batchsize
+			if preind > ziplen
+				continue
+			end
+			ind = inBasis[preind]
+			if B[preind] == 0
+				continue
+			end
+			state = stateFromInd(ind,L+2)
+			ni = 1+(state&(4^L-1))
+			if ni==1 && ((ind-1)&(4^(L+2)-1))==1 && iseven(L)
+				ni=2
+			end
+			if !haskey(fromInd, ni)
+				continue
+			end
+			ni = fromInd[ni]
+			sp = localStatePair(state,L+1,L+2)
+			if (isodd(trailingXs(state,L+2)) || iseven(L) && ni==2)
+				if sp==sXX
+					C[ni] += ζ * B[preind]
+				end
+			else
+				if sp==sXX
+					C[ni] += B[preind]
+				elseif sp==s00 || sp==sPM || sp==sMP
+					C[ni] += √ζ * B[preind]
+				end
+			end
+		end
+	end
+end
 
-# 		@time prepare!(L+1)
+function buildDetach()
+	col=MyInt[]
+	row=MyInt[]
+	val=ZipFloat[]
+	for preind = 1 : ziplen
+		ind = inBasis[preind]
+		state = stateFromInd(ind,L+2)
+		ni = 1+(state&(4^L-1))
+		if ni==1 && ((ind-1)&(4^(L+2)-1))==1 && iseven(L)
+			ni=2
+		end
+		if !haskey(fromInd, ni)
+			continue
+		end
+		ni = fromInd[ni]
+		sp = localStatePair(state,L+1,L+2)
+		if (isodd(trailingXs(state,L+2)) || iseven(L) && ni==2)
+			if sp==sXX
+				append!(col,[preind])
+				append!(row,[ni])
+				append!(val,[ζ])
+			end
+		else
+			if sp==sXX
+				append!(col,[preind])
+				append!(row,[ni])
+				append!(val,[1])
+			elseif sp==s00 || sp==sPM || sp==sMP
+				append!(col,[preind])
+				append!(row,[ni])
+				append!(val,[√ζ])
+			end
+		end
+	end
+	append!(col,[ziplen])
+	append!(row,[len])
+	append!(val,[0])
+	return sparse(row,col,val)
+end
 
-# 		donePath = dataPathL * "done/done_" * string(nev) * "_" * string(L+1) * ".jld2"
-# 		if !ispath(donePath)
-# 			detachPath = dataPathL * "detach.jld2"
-# 			if ispath(detachPath)
-# 				println("load detach...")
-# 				flush(stdout)
-# 				@time @load detachPath ρ
-# 			else
-# 				println("build detach...")
-# 				flush(stdout)
-# 				@time ρ = buildDetach()
-# 				@time @save detachPath ρ
-# 			end
-
-# 			println("act detach...")
-# 			flush(stdout)
-# 			@time for s = 1 : length(e)
-# 				println(s)
-# 				flush(stdout)
-# 				oldPath = dataPathL * "rhov/rhov_" * string(L) * "_" * string(s) * ".jld2"
-# 				path = dataPathL * "rhov/rhov_" * string(L+1) * "_" * string(s) * ".jld2"
-# 				if !ispath(path)
-# 					@load oldPath rhov
-# 					@time rhov = ρ * rhov
-# 					@save path rhov
-# 					flush(stdout)
-# 				end
-# 			end
-# 		end
-# 		@save donePath donePath
-
-# 		u = Matrix{Float16}(undef, len, length(e))
-# 		for s = 1 : length(e)
-# 			path = dataPathL * "rhov/rhov_" * string(L+1) * "_" * string(s) * ".jld2"
-# 			@time @load path rhov
-# 			u[:,s] = rhov
-# 		end
-# 		println()
-# 		flush(stdout)
-# 	else
-# 		println("prepare attach...")
-# 		@time prepare!(0)
-# 		ρ = LinearMap((C,B)->attach!(C,B),ziplen,len,ismutating=true,issymmetric=false,isposdef=false)
-# 		println("act attach...")
-# 		@time u = Matrix(ρ * v)
-# 		println()
-# 		flush(stdout)
-# 		for i = 1 : L
-# 			println("prepare zip ", i, "...")
-# 			@time prepare!(i)
-# 			ρ = LinearMap((C,B)->zip!(C,B,i),ziplen,ziplen,ismutating=true,issymmetric=false,isposdef=false)
-# 			println("act zip ", i, "...")
-# 			@time u = Matrix(ρ * u)
-# 			println()
-# 			flush(stdout)
-# 		end
-# 		println("prepare detach...")
-# 		@time prepare!(L+1)
-# 		ρ = LinearMap((C,B)->detach!(C,B),len,ziplen,ismutating=true,issymmetric=false,isposdef=false)
-# 		println("act detach...")
-# 		@time u = Matrix(ρ * u)
-# 		println()
-# 		flush(stdout)
-# 	end
-
-# 	return adjoint(v) * u
-# end
+#=
+The zipper needs to know the edge label (1,a,b,ρ,aρ,a^2ρ) = (1,2,3,4,5,6)
+right before the vertex from which ρ is draped below.
+=#
+function setEdgeAtDrapeMapping!(edgeAtDrapeMapping,below::Int64,preind::Int64)
+	state = inBasis[preind]-1
+	start = (state>>(2*(L+2))) & 3
+	state = state&(4^(L+2)-1)
+	evenxs=iseven(trailingXs(state,L+2))
+	if(state==1 && iseven(L))
+		state=0
+		evenxs=false
+	end
+	tot=start
+	for pos = 0 : below-2
+		a=(state >> (2*pos)) & 3
+		if a==0
+			evenxs = ! evenxs
+		elseif a==2
+			tot+=1
+		elseif a==3
+			tot+=2
+		end
+	end
+	tot%=3
+	if evenxs
+		edgeAtDrapeMapping[preind] = 4+tot
+	else
+		edgeAtDrapeMapping[preind] = 1+tot
+	end
+end
 
 
-# #=
-# Simultaneous diagonalization and output.
-# =#
+#=
+Act zipper.
+=#
 
-# # Print as mathematica array to reuse Mathematica code for making plots.
-# function mathematicaVector(V)
-# 	s="{"
-# 	for i = 1:(size(V,1)-1)
-# 		s*=string(V[i])
-# 		s*=", "
-# 	end
-# 	s*=string(V[size(V,1)])
-# 	s*="}"
-# 	return s
-# end
+# Compute extended basis etc to prepare for one step of zipper.
+function prepare!(below::Int64)
+	preparePath = dataPathL * "prep/prep_" * string(below) * ".jld2"
+	if ispath(preparePath)
+		if below == 0
+			println("load prepare attach...")
+		elseif below == L+1
+			println("load prepare detach...")
+		else
+			println("load prepare zip " * string(below) * "...")
+		end
+		inBasis = nothing
+		outBasis = nothing
+		zipFromInd = nothing
+		edgeAtDrapeMapping = nothing
+		@load preparePath inBasis outBasis zipFromInd edgeAtDrapeMapping
+	else
+		if below == 0
+			println("prepare attach...")
+		elseif below == L+1
+			println("prepare detach...")
+		else
+			println("prepare zip " * string(below) * "...")
+		end
+		if below == 0
+			global inBasis = basis
+		else
+			global inBasis = outBasis
+			outBasis = nothing
+		end
+		if below == L+1
+			global outBasis = basis
+			global zipFromInd = fromInd
+		else
+			if below > 0
+				global outBasis = nothing
+				global outBasis = getExtendedBasis(basisLego_, L, below+1)
+			end
+			global zipFromInd = nothing
+			global zipFromInd = Dict((outBasis[x],MyInt(x)) for x in 1 : ziplen)
+		end
 
-# # Print as mathematica matrix to reuse Mathematica code for making plots.
-# function mathematicaMatrix(M)
-# 	s="{\n"
-# 	for i = 1:(size(M,1)-1)
-# 		s*=mathematicaVector(M[i])
-# 		s*=",\n"
-# 	end
-# 	s*=mathematicaVector(M[size(M,1)])
-# 	s*="\n}\n"
-# 	return s
-# end
+		global edgeAtDrapeMapping = zeros(Int8,ziplen)
+		if 1 <= below <= L
+			for preind = 1 : ziplen
+				setEdgeAtDrapeMapping!(edgeAtDrapeMapping,below,preind)
+			end
+		end
 
-# function diagonalizeHT(e,v,T)
-# 	println("diagonalizing H,T...")
-# 	println()
-# 	flush(stdout)
+		@save preparePath inBasis outBasis zipFromInd edgeAtDrapeMapping
+	end
+end
 
-# 	smallH = Matrix(diagm(e))
-# 	smallT = Matrix(adjoint(v)*T*v)
-# 	smalle,smallv = eigen(smallH*L*10+smallT)
+function ρMatrix(v)
+	if buildSparse
+		@time prepare!(0)
 
-# 	Hs = real(diag(adjoint(smallv)*smallH*smallv))
-# 	Ts = complex(diag(adjoint(smallv)*smallT*smallv))
-# 	Ps = real(map(log,Ts)/(2*π*im))*L
-# 	HPs = hcat(Hs,Ps)
-# 	HPs = sort([HPs[i,:] for i in 1:size(HPs, 1)])
-# 	s=""
-# 	s*=string(HPs[1][1])
-# 	println(mathematicaMatrix(HPs))
-# end
+		donePath = dataPathL * "done/done_" * string(nev) * "_" * string(0) * ".jld2"
+		if !ispath(donePath) || true
+			attachPath = dataPathL * "attach.jld2"
+			if ispath(attachPath)
+				println("load attach...")
+				flush(stdout)
+				@time @load attachPath ρ
+			else
+				println("build attach...")
+				flush(stdout)
+				@time ρ = buildAttach()
+				@time @save attachPath ρ
+			end
 
-# function diagonalizeHTρ(e,v,T)
-# 	println("diagonalizing H,T,ρ...")
-# 	println()
-# 	flush(stdout)
+			println("act attach...")
+			flush(stdout)
+			@time for s = 1 : length(e)
+				println(s)
+				flush(stdout)
+				path = dataPathL * "rhov/rhov_0_" * string(P) * "_" * string(s) * ".jld2"
+				if !ispath(path)
+					@time rhov = ρ * v[:,s]
+					@save path rhov
+					flush(stdout)
+				end
+			end
+		end
+		# @save donePath donePath
+		println()
+		flush(stdout)
 
-# 	smallH = Matrix(diagm(e))
-# 	smallρ = ρMatrix(v)
-# 	smallT = Matrix(adjoint(v)*T*v)
-# 	smalle,smallv = eigen(smallH*L*10+smallT+smallρ)
+		for i = 1 : L
+			@time prepare!(i)
+			donePath = dataPathL * "done/done_" * string(nev) * "_" * string(i) * ".jld2"
+			if !ispath(donePath) || true
+				zipPath = dataPathL * "zip/zip_" * string(i) * ".jld2"
+				if ispath(zipPath)
+					println("load zip ", i, "...")
+					flush(stdout)
+					@time @load zipPath ρ
+				else
+					println("build zip ", i, "...")
+					flush(stdout)
+					@time ρ = buildZip(i)
+					@time @save zipPath ρ
+				end
 
-# 	Hs = real(diag(adjoint(smallv)*smallH*smallv))
-# 	Ts = complex(diag(adjoint(smallv)*smallT*smallv))
-# 	Ps = real(map(log,Ts)/(2*π*im))*L
-# 	ρs = real(diag(adjoint(smallv)*smallρ*smallv))
-# 	HPρs = hcat(Hs,Ps,ρs)
-# 	HPρs = sort([HPρs[i,:] for i in 1:size(HPρs, 1)])
-# 	s=""
-# 	s*=string(HPρs[1][1])
-# 	println(mathematicaMatrix(HPρs))
-# end
+				println("act zip ", i, "...")
+				flush(stdout)
+				@time for s = 1 : length(e)
+					println(s)
+					flush(stdout)
+					oldPath = dataPathL * "rhov/rhov_" * string(i-1) * "_" * string(P) * "_" * string(s) * ".jld2"
+					path = dataPathL * "rhov/rhov_" * string(i) * "_" * string(P) * "_" * string(s) * ".jld2"
+					if !ispath(path)
+						@load oldPath rhov
+						@time rhov = ρ * rhov
+						@save path rhov
+						flush(stdout)
+					end
+				end
+			end
+			# @save donePath donePath
+			println()
+			flush(stdout)
+		end
 
-# if onlyT
-# 	@time diagonalizeHT(e,v,T)
-# else
-# 	@time diagonalizeHTρ(e,v,T)
-# end
+		@time prepare!(L+1)
+
+		donePath = dataPathL * "done/done_" * string(nev) * "_" * string(L+1) * ".jld2"
+		if !ispath(donePath) || true
+			detachPath = dataPathL * "detach.jld2"
+			if ispath(detachPath)
+				println("load detach...")
+				flush(stdout)
+				@time @load detachPath ρ
+			else
+				println("build detach...")
+				flush(stdout)
+				@time ρ = buildDetach()
+				@time @save detachPath ρ
+			end
+
+			println("act detach...")
+			flush(stdout)
+			@time for s = 1 : length(e)
+				println(s)
+				flush(stdout)
+				oldPath = dataPathL * "rhov/rhov_" * string(L) * "_" * string(P) * "_" * string(s) * ".jld2"
+				path = dataPathL * "rhov/rhov_" * string(L+1) * "_" * string(P) * "_" * string(s) * ".jld2"
+				if !ispath(path)
+					@load oldPath rhov
+					@time rhov = ρ * rhov
+					@save path rhov
+					flush(stdout)
+				end
+			end
+		end
+		# @save donePath donePath
+
+		u = Matrix{ComplexF16}(undef, len, length(e))
+		for s = 1 : length(e)
+			path = dataPathL * "rhov/rhov_" * string(L+1) * "_" * string(P) * "_" * string(s) * ".jld2"
+			@time @load path rhov
+			u[:,s] = rhov
+		end
+		println()
+		flush(stdout)
+	else
+		@time prepare!(0)
+
+		donePath = dataPathL * "done/done_" * string(nev) * "_" * string(0) * ".jld2"
+		if !ispath(donePath) || true
+			ρ = LinearMap((C,B)->attach!(C,B),ziplen,len,ismutating=true,issymmetric=false,isposdef=false)
+
+			println("act attach...")
+			flush(stdout)
+			@time for s = 1 : length(e)
+				println(s)
+				flush(stdout)
+				path = dataPathL * "rhov/rhov_0_" * string(P) * "_" * string(s) * ".jld2"
+				if !ispath(path)
+					@time rhov = ρ * v[:,s]
+					@save path rhov
+					flush(stdout)
+				end
+			end
+		end
+		# @save donePath donePath
+		println()
+		flush(stdout)
+
+		for i = 1 : L
+			@time prepare!(i)
+			donePath = dataPathL * "done/done_" * string(nev) * "_" * string(i) * ".jld2"
+			if !ispath(donePath) || true
+				ρ = LinearMap((C,B)->zip!(C,B,i),ziplen,ziplen,ismutating=true,issymmetric=false,isposdef=false)
+
+				println("act zip ", i, "...")
+				flush(stdout)
+				@time for s = 1 : length(e)
+					println(s)
+					flush(stdout)
+					oldPath = dataPathL * "rhov/rhov_" * string(i-1) * "_" * string(P) * "_" * string(s) * ".jld2"
+					path = dataPathL * "rhov/rhov_" * string(i) * "_" * string(P) * "_" * string(s) * ".jld2"
+					if !ispath(path)
+						@load oldPath rhov
+						@time rhov = ρ * rhov
+						@save path rhov
+						flush(stdout)
+					end
+				end
+			end
+			# @save donePath donePath
+			println()
+			flush(stdout)
+		end
+
+		@time prepare!(L+1)
+
+		donePath = dataPathL * "done/done_" * string(nev) * "_" * string(L+1) * ".jld2"
+		if !ispath(donePath) || true
+			ρ = LinearMap((C,B)->detach!(C,B),len,ziplen,ismutating=true,issymmetric=false,isposdef=false)
+
+			println("act detach...")
+			flush(stdout)
+			@time for s = 1 : length(e)
+				println(s)
+				flush(stdout)
+				oldPath = dataPathL * "rhov/rhov_" * string(L) * "_" * string(P) * "_" * string(s) * ".jld2"
+				path = dataPathL * "rhov/rhov_" * string(L+1) * "_" * string(P) * "_" * string(s) * ".jld2"
+				if !ispath(path)
+					@load oldPath rhov
+					@time rhov = ρ * rhov
+					@save path rhov
+					flush(stdout)
+				end
+			end
+		end
+		# @save donePath donePath
+
+		u = Matrix{ComplexF16}(undef, len, length(e))
+		for s = 1 : length(e)
+			path = dataPathL * "rhov/rhov_" * string(L+1) * "_" * string(P) * "_" * string(s) * ".jld2"
+			@time @load path rhov
+			u[:,s] = rhov
+		end
+		println()
+		flush(stdout)
+	# else
+	# 	println("prepare attach...")
+	# 	@time prepare!(0)
+	# 	ρ = LinearMap((C,B)->attach!(C,B),ziplen,len,ismutating=true,issymmetric=false,isposdef=false)
+	# 	println("act attach...")
+
+	# 	println(size(v))
+	# 	println(Sys.total_memory()/2^20)
+	# 	println(Sys.free_memory()/2^20)
+	# 	@time u = Matrix(ρ * v)
+	# 	println()
+	# 	flush(stdout)
+	# 	for i = 1 : L
+	# 		println("prepare zip ", i, "...")
+	# 		@time prepare!(i)
+	# 		ρ = LinearMap((C,B)->zip!(C,B,i),ziplen,ziplen,ismutating=true,issymmetric=false,isposdef=false)
+	# 		println("act zip ", i, "...")
+	# 		@time u = Matrix(ρ * u)
+	# 		println()
+	# 		flush(stdout)
+	# 	end
+	# 	println("prepare detach...")
+	# 	@time prepare!(L+1)
+	# 	ρ = LinearMap((C,B)->detach!(C,B),len,ziplen,ismutating=true,issymmetric=false,isposdef=false)
+	# 	println("act detach...")
+	# 	@time u = Matrix(ρ * u)
+	# 	println()
+	# 	flush(stdout)
+	end
+
+	return adjoint(v) * u
+end
+
+
+#=
+Simultaneous diagonalization and output.
+=#
+
+# Print as mathematica array to reuse Mathematica code for making plots.
+function mathematicaVector(V)
+	s="{"
+	for i = 1:(size(V,1)-1)
+		s*=string(V[i])
+		s*=", "
+	end
+	s*=string(V[size(V,1)])
+	s*="}"
+	return s
+end
+
+# Print as mathematica matrix to reuse Mathematica code for making plots.
+function mathematicaMatrix(M)
+	s="{\n"
+	for i = 1:(size(M,1)-1)
+		s*=mathematicaVector(M[i])
+		s*=",\n"
+	end
+	s*=mathematicaVector(M[size(M,1)])
+	s*="\n}\n"
+	return s
+end
+
+function diagonalizeHT(e,v,T)
+	println("diagonalizing H,T...")
+	println()
+	flush(stdout)
+
+	# smallH = Matrix(diagm(e))
+	# smalle,smallv = eigen(smallH*L*10)
+	# Hs = real(diag(adjoint(smallv)*smallH*smallv))
+
+	Hs = e
+	if P == L
+		Ps = [ P * ones(nev) for P in 0 : Int64(floor(L/2)) ]
+		Ps = [(Ps...)...]
+	else
+		Ps = P * ones(nev)
+	end
+	HPs = hcat(Hs,Ps)
+	HPs = sort([HPs[i,:] for i in 1:size(HPs, 1)])
+	s=""
+	s*=string(HPs[1][1])
+	println(mathematicaMatrix(HPs))
+end
+
+function diagonalizeHTρ(e,v,T)
+	println("diagonalizing H,T,ρ...")
+	println()
+	flush(stdout)
+
+	smallH = Matrix(diagm(e))
+	if P == L
+		Ps = [ P * ones(nev) for P in 0 : Int64(floor(L/2)) ]
+		Ps = [(Ps...)...]
+	else
+		Ps = P * ones(nev)
+	end
+	smallP = diagm(Ps)
+	smallρ = ρMatrix(v)
+	smalle,smallv = eigen(smallH*L*10+smallP/L+smallρ)
+
+	Hs = real(diag(adjoint(smallv)*smallH*smallv))
+	Ps = real(diag(adjoint(smallv)*smallP*smallv))
+	# if P == L
+	# 	Ps = [ P * ones(nev) for P in 0 : Int64(floor(L/2)) ]
+	# 	Ps = [(Ps...)...]
+	# else
+	# 	Ps = P * ones(nev)
+	# end
+	ρs = real(diag(adjoint(smallv)*smallρ*smallv))
+	HPρs = hcat(Hs,Ps,ρs)
+	HPρs = sort([HPρs[i,:] for i in 1:size(HPρs, 1)])
+	s=""
+	s*=string(HPρs[1][1])
+	println(mathematicaMatrix(HPρs))
+end
+
+if P != -1
+	if onlyT
+		@time diagonalizeHT(e,v,T)
+	else
+		const prepZipPath = dataPathL * "prepZip.jld2"
+		if ispath(prepZipPath)
+			println("load zipper...")
+			flush(stdout)
+			@time @load prepZipPath inBasis outBasis ziplen zipFromInd edgeAtDrapeMapping
+		else
+			println("prepare zipper...")
+			flush(stdout)
+			inBasis = basis
+			@time outBasis = getExtendedBasis(basisLego_, L, 1)
+			ziplen = length(outBasis)
+			zipFromInd = Dict{Int64,MyInt}((outBasis[x],MyInt(x)) for x in 1 : ziplen)
+			edgeAtDrapeMapping = zeros(Int8,ziplen)
+			@time @save prepZipPath inBasis outBasis ziplen zipFromInd edgeAtDrapeMapping
+		end
+		println()
+		flush(stdout)
+
+		@time diagonalizeHTρ(e,v,T)
+	end
+end
