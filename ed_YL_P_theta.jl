@@ -455,13 +455,13 @@ function computeDiag!(diag::Vector{MyFloat},flag::Vector{MyInt},preind::Int64)
 	for i = 1 : L
 		sp=localStatePair(state,i)
 		if sp==sX0
-			diag[preind] -= 1
+			diag[preind] -= cos(Θ)
 		elseif sp==s0X
-			diag[preind] -= 1
+			diag[preind] -= cos(Θ)
 		elseif sp==sXX && isρ1ρ(flag,preind,i)
 			diag[preind] -= (cos(Θ) * (1/ζ) + sin(Θ) * (1/ζ^2))
 		elseif sp==sXX
-			diag[preind] -= sin(Θ) * (1/ζ)
+			diag[preind] -= sin(Θ)
 		elseif sp==sPM
 			diag[preind] -= (cos(Θ) * y1 * y1 + sin(Θ) * (1/ζ))
 		elseif sp==sMP
@@ -626,7 +626,7 @@ function buildH(diag,flag)
 		row=MyInt[]
 		val=MyFloat[]
 	end
-	return res
+	return res # change sign here to switch ferro/anti-ferro. 0 <-> pi might not be accurate enough in floating point.
 end
 
 # function Hfunc!(C,B,diag::Vector{MyFloat},flag::Vector{MyInt})
@@ -1880,7 +1880,7 @@ function diagonalizeHTρ(e,v,T)
 	smalle,smallv = eigen(smallH*L*10+smallP/L+smallρ)
 
 	Hs = real(diag(adjoint(smallv)*smallH*smallv))
-	Ps = real(diag(adjoint(smallv)*smallP*smallv))
+	# Ps = real(diag(adjoint(smallv)*smallP*smallv))
 	# if P == L
 	# 	Ps = [ P * ones(nev) for P in 0 : Int64(floor(L/2)) ]
 	# 	Ps = [(Ps...)...]
@@ -1893,6 +1893,9 @@ function diagonalizeHTρ(e,v,T)
 	s=""
 	s*=string(HPρs[1][1])
 	println(mathematicaMatrix(HPρs))
+	open("spec8.txt", "a") do io
+		write(io, mathematicaMatrix(HPρs))
+	end
 end
 
 if P != -1

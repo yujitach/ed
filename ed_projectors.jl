@@ -459,9 +459,9 @@ function computeDiag!(diag::Vector{MyFloat},flag::Vector{MyInt},preind::Int64)
 	for i = 1 : L
 		sp=localStatePair(state,i)
 		if sp==sX0
-			diag[preind] -= 1
+			diag[preind] -= c1
 		elseif sp==s0X
-			diag[preind] -= 1
+			diag[preind] -= c1
 		elseif sp==sXX && isρ1ρ(flag,preind,i)
 			diag[preind] -= (c1+c2+c3) * (1/ζ)
 		elseif sp==sPM
