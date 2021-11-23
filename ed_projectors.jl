@@ -458,10 +458,20 @@ function computeDiag!(diag::Vector{MyFloat},flag::Vector{MyInt},preind::Int64)
 	diag[preind]=0
 	for i = 1 : L
 		sp=localStatePair(state,i)
+		# external invertible lines
 		if sp==sX0
 			diag[preind] -= c1
 		elseif sp==s0X
 			diag[preind] -= c1
+		elseif sp==sXP
+			diag[preind] -= c2
+		elseif sp==sPX
+			diag[preind] -= c2
+		elseif sp==sXM
+			diag[preind] -= c3
+		elseif sp==sMX
+			diag[preind] -= c3
+		# all external lines non-invertible
 		elseif sp==sXX && isρ1ρ(flag,preind,i)
 			diag[preind] -= (c1+c2+c3) * (1/ζ)
 		elseif sp==sPM
@@ -475,7 +485,7 @@ function computeDiag!(diag::Vector{MyFloat},flag::Vector{MyInt},preind::Int64)
 		elseif sp==sP0
 			diag[preind] -= (c1 * y2 * y2 + c2 * z * z + c3 * y1 * y1)
 		elseif sp==sMM
-			diag[preind] -= (c1 * z * z + c2 * y2 * y2 + c3 * y1 * y1)
+			diag[preind] -= (c1 * z * z + c2 * y1 * y1 + c3 * y2 * y2)
 		elseif sp==s0M
 			diag[preind] -= (c1 * y2 * y2 + c2 * z * z + c3 * y1 * y1)
 		elseif sp==sM0
