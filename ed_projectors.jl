@@ -466,11 +466,11 @@ function computeDiag!(diag::Vector{MyFloat},flag::Vector{MyInt},preind::Int64)
 		elseif sp==sXP
 			diag[preind] -= c2
 		elseif sp==sPX
-			diag[preind] -= c2
+			diag[preind] -= c3
 		elseif sp==sXM
 			diag[preind] -= c3
 		elseif sp==sMX
-			diag[preind] -= c3
+			diag[preind] -= c2
 		# all external lines non-invertible
 		elseif sp==sXX && isρ1ρ(flag,preind,i)
 			diag[preind] -= (c1+c2+c3) * (1/ζ)
